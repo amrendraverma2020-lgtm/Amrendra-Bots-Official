@@ -14,16 +14,22 @@ app.get("/", (req, res) => {
   res.send("Amrendra Support Bot is running");
 });
 
-// ===== SEND MESSAGE HELPER =====
-async function sendMessage(chatId, text) {
+// ===== SAFE SEND MESSAGE =====
+// markdown = true ONLY for bot-made messages
+async function sendMessage(chatId, text, markdown = false) {
+  const payload = {
+    chat_id: chatId,
+    text: text,
+  };
+
+  if (markdown) {
+    payload.parse_mode = "Markdown";
+  }
+
   await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text: text,
-      parse_mode: "Markdown"
-    }),
+    body: JSON.stringify(payload),
   });
 }
 
@@ -45,14 +51,15 @@ app.post("/", async (req, res) => {
       await sendMessage(
         chatId,
         "👋 *Welcome to Amrendra Support Bot* 🤖\n\n" +
-        "Thank you for reaching out.\n\n" +
-        "📝 You can send your:\n" +
-        "• Queries\n" +
-        "• Issues\n" +
-        "• Feedback\n" +
-        "• Suggestions\n\n" +
-        "📩 Your message will be securely forwarded to the owner for review.\n\n" +
-        "⏳ Please allow some time for a response."
+          "Thank you for reaching out.\n\n" +
+          "📝 You can send your:\n" +
+          "• Queries\n" +
+          "• Issues\n" +
+          "• Feedback\n" +
+          "• Suggestions\n\n" +
+          "📩 Your message will be securely forwarded to the owner for review.\n\n" +
+          "⏳ Please allow some time for a response.",
+        true
       );
       return res.send("ok");
     }
@@ -62,9 +69,9 @@ app.post("/", async (req, res) => {
       return res.send("ok");
     }
 
-    // ===== FORWARD MESSAGE TO OWNER =====
+    // ===== FORWARD MESSAGE TO OWNER (NO MARKDOWN) =====
     let forwardText =
-      "📩 *New Support Message*\n\n" +
+      "📩 New Support Message\n\n" +
       `👤 User: ${userName}\n` +
       `🆔 User ID: ${userId}\n\n`;
 
@@ -78,15 +85,16 @@ app.post("/", async (req, res) => {
       forwardText += "📩 New message received";
     }
 
-    await sendMessage(OWNER_ID, forwardText);
+    await sendMessage(OWNER_ID, forwardText); // markdown = false
 
     // ===== CONFIRM TO USER =====
     await sendMessage(
       chatId,
       "✅ *Message Received Successfully*\n\n" +
-      "Your message has been forwarded to the support team.\n\n" +
-      "⏳ You will be notified once a response is available.\n" +
-      "Thank you for your patience."
+        "Your message has been forwarded to the support team.\n\n" +
+        "⏳ You will be notified once a response is available.\n" +
+        "Thank you for your patience.",
+      true
     );
 
     return res.send("ok");

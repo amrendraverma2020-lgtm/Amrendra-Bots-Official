@@ -1,16 +1,18 @@
 {
   "name": "amrendra-file-to-link-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "Telegram File To Link Bot with Smart Download Mode",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
+  "author": "Amrendra",
   "license": "ISC",
-  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.0.0"
   }
 }

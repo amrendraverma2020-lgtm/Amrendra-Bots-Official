@@ -1,127 +1,70 @@
 const express = require("express");
 const { Telegraf } = require("telegraf");
-const axios = require("axios");
-const fs = require("fs-extra");
-const path = require("path");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const PORT = process.env.PORT || 10000;
+
 if (!BOT_TOKEN) {
-  console.error("BOT_TOKEN missing");
+  console.error("❌ BOT_TOKEN missing");
   process.exit(1);
 }
 
-const bot = new Telegraf(BOT_TOKEN);
+// ==================
+// Dummy HTTP Server
+// ==================
 const app = express();
 
-const PORT = process.env.PORT || 10000;
-
-const TEMP_DIR = path.join(__dirname, "temp");
-const THUMB_DIR = path.join(__dirname, "thumbnails");
-
-fs.ensureDirSync(TEMP_DIR);
-fs.ensureDirSync(THUMB_DIR);
-
-// =======================
-// EXPRESS (FOR RENDER)
-// =======================
 app.get("/", (req, res) => {
-  res.send("Amrendra File Renamer Bot is running ✅");
+  res.send("Amrendra File Bot is running ✅");
 });
 
 app.listen(PORT, () => {
-  console.log("HTTP server running on port", PORT);
+  console.log(`🌐 Dummy server running on port ${PORT}`);
 });
 
-// =======================
-// BOT COMMANDS
-// =======================
-bot.start(ctx => {
+// ==================
+// Telegram Bot
+// ==================
+const bot = new Telegraf(BOT_TOKEN);
+
+bot.start((ctx) => {
   ctx.reply(
-    "👋 *Welcome to Amrendra File Renamer Bot*\n\n" +
-    "📤 Send any video or document\n" +
-    "🖼 Send a photo to set thumbnail\n" +
-    "✏️ File will be renamed & re-uploaded\n\n" +
-    "⚡ Max size ~300MB",
+    "👋 *Welcome to Amrendra File Bot*\n\n" +
+    "📦 Send me a video or document.\n" +
+    "⚡ Free long polling mode active.\n\n" +
+    "More features coming soon 🚀",
     { parse_mode: "Markdown" }
   );
 });
 
-// =======================
-// SAVE THUMBNAIL
-// =======================
-bot.on("photo", async ctx => {
-  const userId = ctx.from.id;
-  const photo = ctx.message.photo.pop();
+bot.on(["video", "document"], async (ctx) => {
+  try {
+    const file =
+      ctx.message.video || ctx.message.document;
 
-  const fileLink = await ctx.telegram.getFileLink(photo.file_id);
-  const thumbPath = path.join(THUMB_DIR, `${userId}.jpg`);
+    const sizeMB = (file.file_size / (1024 * 1024)).toFixed(1);
 
-  const response = await axios.get(fileLink.href, { responseType: "stream" });
-  const writer = fs.createWriteStream(thumbPath);
-
-  response.data.pipe(writer);
-
-  writer.on("finish", () => {
-    ctx.reply("✅ Thumbnail saved successfully");
-  });
-});
-
-// =======================
-// FILE HANDLER
-// =======================
-bot.on(["video", "document"], async ctx => {
-  const msg = ctx.message;
-  const file = msg.video || msg.document;
-  const userId = ctx.from.id;
-
-  const fileSizeMB = (file.file_size / (1024 * 1024)).toFixed(1);
-  if (file.file_size > 300 * 1024 * 1024) {
-    return ctx.reply("❌ File too large. Max 300MB allowed.");
-  }
-
-  await ctx.reply(`📦 File received (${fileSizeMB} MB)\n⏳ Processing...`);
-
-  const fileLink = await ctx.telegram.getFileLink(file.file_id);
-  const ext = path.extname(file.file_name || ".bin");
-
-  const cleanName =
-    "AmrendraBots_" +
-    Date.now() +
-    ext;
-
-  const tempFilePath = path.join(TEMP_DIR, cleanName);
-
-  // Download file
-  const response = await axios.get(fileLink.href, { responseType: "stream" });
-  const writer = fs.createWriteStream(tempFilePath);
-  response.data.pipe(writer);
-
-  writer.on("finish", async () => {
-    const thumbPath = path.join(THUMB_DIR, `${userId}.jpg`);
-
-    const sendOptions = {};
-    if (fs.existsSync(thumbPath)) {
-      sendOptions.thumb = { source: thumbPath };
-    }
-
-    await ctx.reply("📤 Uploading renamed file...");
-
-    await ctx.replyWithDocument(
-      { source: tempFilePath, filename: cleanName },
-      sendOptions
+    await ctx.reply(
+      `📦 File received (${sizeMB} MB)\n⏳ Processing...`
     );
 
-    fs.removeSync(tempFilePath);
-  });
+    // Test response only (no download yet)
+    await ctx.reply(
+      "✅ File detected successfully.\n\n" +
+      "🛠 Processing logic will be added next."
+    );
+  } catch (err) {
+    console.error(err);
+    ctx.reply("❌ Error while processing file.");
+  }
 });
 
-// =======================
-// START BOT
-// =======================
+// ==================
+// Start Long Polling
+// ==================
 bot.launch().then(() => {
-  console.log("Bot started successfully");
+  console.log("🤖 Bot started (Long Polling)");
 });
 
-// Graceful stop
 process.once("SIGINT", () => bot.stop("SIGINT"));
 process.once("SIGTERM", () => bot.stop("SIGTERM"));

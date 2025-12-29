@@ -3,14 +3,8 @@ const express = require("express");
 const app = express();
 app.use(express.json());
 
-// ===== ENV =====
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const PORT = process.env.PORT || 10000;
-
-// ===== HEALTH CHECK =====
-app.get("/", (req, res) => {
-  res.send("Amrendra File To Link Bot is running");
-});
 
 // ===== SEND MESSAGE =====
 async function sendMessage(chatId, text) {
@@ -19,58 +13,97 @@ async function sendMessage(chatId, text) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       chat_id: chatId,
-      text: text,
+      text,
     }),
   });
+}
+
+// ===== GET FILE URL FROM TELEGRAM =====
+async function getTelegramFile(fileId) {
+  const res = await fetch(
+    `https://api.telegram.org/bot${BOT_TOKEN}/getFile?file_id=${fileId}`
+  );
+  const data = await res.json();
+  return `https://api.telegram.org/file/bot${BOT_TOKEN}/${data.result.file_path}`;
+}
+
+// ===== GOFILE UPLOAD =====
+async function uploadToGoFile(fileUrl) {
+  const serverRes = await fetch("https://api.gofile.io/getServer");
+  const server = (await serverRes.json()).data.server;
+
+  const uploadRes = await fetch(`https://${server}.gofile.io/uploadFile`, {
+    method: "POST",
+    body: new URLSearchParams({ file: fileUrl }),
+  });
+
+  const result = await uploadRes.json();
+  return result.data.downloadPage;
 }
 
 // ===== WEBHOOK =====
 app.post("/", async (req, res) => {
   try {
-    const update = req.body;
-    if (!update.message) return res.send("ok");
+    const msg = req.body.message;
+    if (!msg) return res.send("ok");
 
-    const msg = update.message;
     const chatId = msg.chat.id;
 
     // /start
     if (msg.text === "/start") {
       await sendMessage(
         chatId,
-        "👋 Welcome to *Amrendra File To Link Bot*\n\n" +
-        "📤 Send any file and I’ll analyze it for smart download options."
+        "📂 *Amrendra File To Link Bot*\n\n" +
+          "Forward any file here.\n" +
+          "• ≤ 300 MB → Fast browser link\n" +
+          "• > 300 MB → Telegram optimized\n\n" +
+          "No login • No card • No extra data"
       );
       return res.send("ok");
     }
 
-    // ===== FILE DETECTION =====
-    let file = msg.document || msg.video || msg.audio;
+    const file =
+      msg.document || msg.video || msg.audio || msg.voice || null;
+
     if (!file) {
-      await sendMessage(chatId, "📎 Please send a file (video / audio / document).");
+      await sendMessage(chatId, "❌ Please send a valid file.");
       return res.send("ok");
     }
 
-    const sizeMB = (file.file_size / (1024 * 1024)).toFixed(1);
+    const sizeMB = file.file_size / (1024 * 1024);
 
-    // ===== SMART MODE MESSAGE (LOCKED) =====
-    const smartMsg =
-      "🤖 Smart Download Mode Activated\n\n" +
-      "To ensure maximum download stability and accuracy, this file is optimized for direct Telegram download.\n\n" +
-      "💡 Tip: Fast browser downloads are available for smaller files to provide better speed.";
+    // ===== LARGE FILE =====
+    if (sizeMB > 300) {
+      await sendMessage(
+        chatId,
+        "🤖 Smart Download Mode Activated\n\n" +
+          "To ensure maximum download stability and accuracy, this file is optimized for direct Telegram download.\n\n" +
+          "💡 Tip: Fast browser downloads are available for smaller files to provide better speed."
+      );
+      return res.send("ok");
+    }
+
+    // ===== SMALL FILE → LINK =====
+    await sendMessage(chatId, "⏳ Uploading file… Please wait");
+
+    const tgFileUrl = await getTelegramFile(file.file_id);
+    const link = await uploadToGoFile(tgFileUrl);
 
     await sendMessage(
       chatId,
-      `📦 File detected\nSize: ${sizeMB} MB\n\n${smartMsg}`
+      "✅ *Download Ready*\n\n" +
+        `🔗 ${link}\n\n` +
+        "⚡ Fast browser download enabled"
     );
 
-    return res.send("ok");
+    res.send("ok");
   } catch (e) {
     console.error(e);
-    return res.send("ok");
+    res.send("ok");
   }
 });
 
-// ===== START SERVER =====
-app.listen(PORT, () => {
-  console.log("Amrendra File To Link Bot running on port", PORT);
-});
+// ===== START =====
+app.listen(PORT, () =>
+  console.log("Amrendra File To Link Bot running")
+);

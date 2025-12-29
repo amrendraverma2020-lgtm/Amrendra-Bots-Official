@@ -1,5 +1,8 @@
 const express = require("express");
 const { Telegraf } = require("telegraf");
+const axios = require("axios");
+const fs = require("fs-extra");
+const path = require("path");
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const PORT = process.env.PORT || 10000;
@@ -9,62 +12,112 @@ if (!BOT_TOKEN) {
   process.exit(1);
 }
 
-// ==================
-// Dummy HTTP Server
-// ==================
+const bot = new Telegraf(BOT_TOKEN);
 const app = express();
 
+// ===== DUMMY HTTP SERVER (RENDER REQUIRED) =====
 app.get("/", (req, res) => {
-  res.send("Amrendra File Bot is running ✅");
+  res.send("Amrendra File Renamer Bot is running ✅");
 });
 
 app.listen(PORT, () => {
-  console.log(`🌐 Dummy server running on port ${PORT}`);
+  console.log("🌐 Web server running on port", PORT);
 });
 
-// ==================
-// Telegram Bot
-// ==================
-const bot = new Telegraf(BOT_TOKEN);
+// ===== TEMP STORAGE =====
+const TEMP_DIR = path.join(__dirname, "temp");
+fs.ensureDirSync(TEMP_DIR);
 
+// ===== USER STATE (IN-MEMORY) =====
+const userState = new Map();
+
+// ===== START =====
 bot.start((ctx) => {
   ctx.reply(
-    "👋 *Welcome to Amrendra File Bot*\n\n" +
-    "📦 Send me a video or document.\n" +
-    "⚡ Free long polling mode active.\n\n" +
-    "More features coming soon 🚀",
+    "👋 *Welcome to Amrendra File Renamer Bot*\n\n" +
+    "📦 Send a video or document\n" +
+    "✏️ Then choose a new file name\n\n" +
+    "⚠️ Max recommended size: 200–300 MB",
     { parse_mode: "Markdown" }
   );
 });
 
+// ===== FILE RECEIVE =====
 bot.on(["video", "document"], async (ctx) => {
+  const file =
+    ctx.message.video || ctx.message.document;
+
+  const fileSizeMB = (file.file_size / (1024 * 1024)).toFixed(1);
+
+  if (file.file_size > 300 * 1024 * 1024) {
+    return ctx.reply("❌ File too large. Max 300 MB allowed.");
+  }
+
+  userState.set(ctx.from.id, {
+    file_id: file.file_id,
+    original_name: file.file_name || "file",
+    mime_type: file.mime_type,
+  });
+
+  ctx.reply(
+    `📦 *File received* (${fileSizeMB} MB)\n\n` +
+    "✏️ Please send the *new file name*\n" +
+    "_(extension likhne ki zarurat nahi)_",
+    { parse_mode: "Markdown" }
+  );
+});
+
+// ===== FILENAME INPUT =====
+bot.on("text", async (ctx) => {
+  const state = userState.get(ctx.from.id);
+  if (!state) return;
+
+  let newName = ctx.message.text
+    .replace(/[<>:"/\\|?*]+/g, "")
+    .trim();
+
+  if (!newName) {
+    return ctx.reply("⚠️ Invalid name. Please send a valid text name.");
+  }
+
+  const fileLink = await ctx.telegram.getFileLink(state.file_id);
+  const ext = path.extname(state.original_name) || "";
+
+  const finalName = `${newName}${ext}`;
+  const tempPath = path.join(TEMP_DIR, finalName);
+
+  ctx.reply("⏳ Processing your file…");
+
   try {
-    const file =
-      ctx.message.video || ctx.message.document;
+    // Download
+    const response = await axios({
+      url: fileLink.href,
+      method: "GET",
+      responseType: "stream",
+    });
 
-    const sizeMB = (file.file_size / (1024 * 1024)).toFixed(1);
+    await new Promise((resolve, reject) => {
+      const stream = fs.createWriteStream(tempPath);
+      response.data.pipe(stream);
+      stream.on("finish", resolve);
+      stream.on("error", reject);
+    });
 
-    await ctx.reply(
-      `📦 File received (${sizeMB} MB)\n⏳ Processing...`
+    // Upload back
+    await ctx.replyWithDocument(
+      { source: tempPath, filename: finalName },
+      { caption: "✅ Renamed successfully" }
     );
 
-    // Test response only (no download yet)
-    await ctx.reply(
-      "✅ File detected successfully.\n\n" +
-      "🛠 Processing logic will be added next."
-    );
   } catch (err) {
     console.error(err);
-    ctx.reply("❌ Error while processing file.");
+    ctx.reply("❌ Failed to process file.");
+  } finally {
+    fs.remove(tempPath);
+    userState.delete(ctx.from.id);
   }
 });
 
-// ==================
-// Start Long Polling
-// ==================
-bot.launch().then(() => {
-  console.log("🤖 Bot started (Long Polling)");
-});
-
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));
+// ===== START BOT =====
+bot.launch();
+console.log("🤖 Bot started successfully");

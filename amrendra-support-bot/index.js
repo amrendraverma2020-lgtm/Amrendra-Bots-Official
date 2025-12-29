@@ -4,12 +4,12 @@ const fetch = require("node-fetch");
 const app = express();
 app.use(express.json());
 
-// ===== CONFIG (FROM ENV) =====
+// ===== ENV VARIABLES =====
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const OWNER_ID = process.env.OWNER_ID;
 
 if (!BOT_TOKEN || !OWNER_ID) {
-  throw new Error("Missing BOT_TOKEN or OWNER_ID in environment variables");
+  throw new Error("❌ BOT_TOKEN or OWNER_ID missing in environment variables");
 }
 
 // ===== HEALTH CHECK =====
@@ -17,9 +17,11 @@ app.get("/", (req, res) => {
   res.send("Amrendra Support Bot is running");
 });
 
-// ===== SEND MESSAGE =====
+// ===== SEND MESSAGE FUNCTION =====
 async function sendMessage(chatId, text) {
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+
+  await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -31,9 +33,14 @@ async function sendMessage(chatId, text) {
 
 // ===== WEBHOOK HANDLER =====
 app.post("/", async (req, res) => {
+  console.log("🔔 Webhook hit received");
+
   try {
     const update = req.body;
-    if (!update.message) return res.send("ok");
+
+    if (!update.message) {
+      return res.send("ok");
+    }
 
     const msg = update.message;
     const chatId = msg.chat.id;
@@ -42,15 +49,11 @@ app.post("/", async (req, res) => {
       ? `@${msg.from.username}`
       : msg.from.first_name;
 
-    // /start
+    // /start command
     if (msg.text === "/start") {
       await sendMessage(
         chatId,
-`👋 Welcome to Amrendra Support Bot 🤖
-
-📝 Send your issue, query, or feedback
-📩 Your message will be forwarded to the owner
-⏳ Please wait patiently for a response`
+        "👋 Welcome to Amrendra Support Bot\n\n📝 Send your issue or query.\n📩 Your message will be sent to the owner."
       );
       return res.send("ok");
     }
@@ -62,7 +65,7 @@ app.post("/", async (req, res) => {
 
     // Forward message to owner
     let forwardText =
-      `📩 New Support Message\n\n` +
+      "📩 New Support Message\n\n" +
       `👤 User: ${userName}\n` +
       `🆔 ID: ${userId}\n\n`;
 
@@ -81,18 +84,18 @@ app.post("/", async (req, res) => {
     // Acknowledge user
     await sendMessage(
       chatId,
-      "✅ Your message has been sent to support.\nYou will receive a reply soon."
+      "✅ Your message has been sent to support. Please wait for a reply."
     );
 
-    res.send("ok");
+    return res.send("ok");
   } catch (err) {
-    console.error(err);
-    res.send("ok");
+    console.error("❌ Error:", err);
+    return res.send("ok");
   }
 });
 
 // ===== START SERVER =====
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT;
 app.listen(PORT, () => {
   console.log("Amrendra Support Bot running on port", PORT);
 });

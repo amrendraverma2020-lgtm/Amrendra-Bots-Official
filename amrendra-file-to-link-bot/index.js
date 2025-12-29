@@ -1,89 +1,106 @@
-const express = require("express");
-const app = express();
-
-app.use(express.json());
+const { Telegraf } = require("telegraf");
+const fs = require("fs-extra");
+const path = require("path");
+require("dotenv").config();
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const PORT = process.env.PORT || 10000;
-
-// health check
-app.get("/", (req, res) => {
-  res.send("Amrendra File Bot running");
-});
-
-// helper
-async function sendMessage(chatId, text) {
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      chat_id: chatId,
-      text
-    })
-  });
+if (!BOT_TOKEN) {
+  console.error("❌ BOT_TOKEN missing in environment");
+  process.exit(1);
 }
 
-// webhook
-app.post("/", async (req, res) => {
+const bot = new Telegraf(BOT_TOKEN);
+
+// ===== CONFIG =====
+const TEMP_DIR = "./temp";
+const MAX_SIZE = 300 * 1024 * 1024; // 300 MB
+const RENAME_PREFIX = "@AmrendraBots"; // 🔁 change as you want
+// ===================
+
+fs.ensureDirSync(TEMP_DIR);
+
+const activeUsers = new Set();
+
+// ===== START COMMAND =====
+bot.start(ctx => {
+  ctx.reply(
+    "🤖 File Renamer Bot\n\n" +
+    "📂 Video ya Document bhejo\n" +
+    "♻️ Main rename karke wapas bhej dunga\n\n" +
+    "⚠️ Max file size: 300MB"
+  );
+});
+
+// ===== FILE HANDLER =====
+bot.on(["document", "video"], async ctx => {
+  const userId = ctx.from.id;
+
+  if (activeUsers.has(userId)) {
+    return ctx.reply("⏳ Pehle wali file process ho rahi hai, wait karo");
+  }
+
+  const file = ctx.message.document || ctx.message.video;
+
+  if (file.file_size > MAX_SIZE) {
+    return ctx.reply("❌ File too large (Max 300MB allowed)");
+  }
+
+  activeUsers.add(userId);
+
+  let tempPath = "";
+
   try {
-    const msg = req.body.message;
-    if (!msg) return res.send("ok");
+    await ctx.reply("📥 File mil gayi, processing...");
 
-    const chatId = msg.chat.id;
+    // ===== FILE INFO =====
+    const originalName =
+      file.file_name ||
+      `video_${Date.now()}.mp4`;
 
-    // /start
-    if (msg.text === "/start") {
-      await sendMessage(
-        chatId,
-        "👋 Welcome!\n\nSend any file and I’ll analyze the best download mode for you."
-      );
-      return res.send("ok");
-    }
+    const safeName = originalName.replace(/[^\w.\-]/g, "_");
+    const newFileName = `${RENAME_PREFIX}_${safeName}`;
 
-    // detect file
-    const file =
-      msg.document ||
-      msg.video ||
-      msg.audio;
+    tempPath = path.join(TEMP_DIR, newFileName);
 
-    if (!file || !file.file_size) {
-      await sendMessage(chatId, "❌ Please send a valid file.");
-      return res.send("ok");
-    }
+    // ===== DOWNLOAD FILE =====
+    const fileLink = await ctx.telegram.getFileLink(file.file_id);
 
-    const sizeMB = (file.file_size / (1024 * 1024)).toFixed(1);
+    const response = await fetch(fileLink.href);
+    const buffer = await response.arrayBuffer();
 
-    if (file.file_size >= 300 * 1024 * 1024) {
-      await sendMessage(
-        chatId,
-`🤖 Smart Download Mode Activated
+    await fs.writeFile(tempPath, Buffer.from(buffer));
 
-📦 File Size: ${sizeMB} MB
+    // ===== UPLOAD BACK =====
+    await ctx.reply("📤 Uploading renamed file...");
 
-To ensure maximum download stability and accuracy, this file is optimized for direct Telegram download.
-
-💡 Tip: Fast browser downloads are available for smaller files.`
+    if (ctx.message.video) {
+      await ctx.replyWithVideo(
+        { source: tempPath },
+        { caption: `✅ Renamed\n${newFileName}` }
       );
     } else {
-      await sendMessage(
-        chatId,
-`⚡ Fast Mode
-
-📦 File Size: ${sizeMB} MB
-
-This file is eligible for faster download options.
-
-🚀 More features coming soon.`
+      await ctx.replyWithDocument(
+        { source: tempPath },
+        { caption: `✅ Renamed\n${newFileName}` }
       );
     }
 
-    res.send("ok");
-  } catch (e) {
-    console.error(e);
-    res.send("ok");
+  } catch (err) {
+    console.error(err);
+    await ctx.reply("❌ Error aaya, baad me try karo");
+  } finally {
+    // ===== CLEANUP =====
+    if (tempPath && fs.existsSync(tempPath)) {
+      await fs.remove(tempPath);
+    }
+    activeUsers.delete(userId);
   }
 });
 
-app.listen(PORT, () => {
-  console.log("Bot running on port", PORT);
-});
+// ===== BOT START =====
+bot.launch();
+console.log("✅ Bot started successfully");
+
+// ===== SAFE SHUTDOWN =====
+process.on("SIGINT", () => bot.stop("SIGINT"));
+process.on("SIGTERM", () => bot.stop("SIGTERM"));

@@ -1,3 +1,4 @@
+const express = require("express");
 const { Telegraf } = require("telegraf");
 const axios = require("axios");
 const fs = require("fs-extra");
@@ -10,56 +11,117 @@ if (!BOT_TOKEN) {
 }
 
 const bot = new Telegraf(BOT_TOKEN);
-const TEMP_DIR = "./temp";
-fs.ensureDirSync(TEMP_DIR);
+const app = express();
 
-// /start
-bot.start((ctx) => {
+const PORT = process.env.PORT || 10000;
+
+const TEMP_DIR = path.join(__dirname, "temp");
+const THUMB_DIR = path.join(__dirname, "thumbnails");
+
+fs.ensureDirSync(TEMP_DIR);
+fs.ensureDirSync(THUMB_DIR);
+
+// =======================
+// EXPRESS (FOR RENDER)
+// =======================
+app.get("/", (req, res) => {
+  res.send("Amrendra File Renamer Bot is running ✅");
+});
+
+app.listen(PORT, () => {
+  console.log("HTTP server running on port", PORT);
+});
+
+// =======================
+// BOT COMMANDS
+// =======================
+bot.start(ctx => {
   ctx.reply(
-    "👋 Welcome to Amrendra File Renamer Bot\n\n" +
+    "👋 *Welcome to Amrendra File Renamer Bot*\n\n" +
     "📤 Send any video or document\n" +
-    "✏️ Bot will rename & send back\n\n" +
-    "⚡ Fast • Free • Safe"
+    "🖼 Send a photo to set thumbnail\n" +
+    "✏️ File will be renamed & re-uploaded\n\n" +
+    "⚡ Max size ~300MB",
+    { parse_mode: "Markdown" }
   );
 });
 
-// Handle files
-bot.on(["video", "document"], async (ctx) => {
-  try {
-    const file = ctx.message.video || ctx.message.document;
-    const sizeMB = file.file_size / (1024 * 1024);
+// =======================
+// SAVE THUMBNAIL
+// =======================
+bot.on("photo", async ctx => {
+  const userId = ctx.from.id;
+  const photo = ctx.message.photo.pop();
 
-    if (sizeMB > 300) {
-      return ctx.reply("❌ File too large (max 300MB allowed)");
-    }
+  const fileLink = await ctx.telegram.getFileLink(photo.file_id);
+  const thumbPath = path.join(THUMB_DIR, `${userId}.jpg`);
 
-    await ctx.reply("⏳ Processing your file…");
+  const response = await axios.get(fileLink.href, { responseType: "stream" });
+  const writer = fs.createWriteStream(thumbPath);
 
-    const fileLink = await ctx.telegram.getFileLink(file.file_id);
-    const ext = path.extname(file.file_name || ".mp4");
-    const newName = `@AmrendraBots_${Date.now()}${ext}`;
-    const tempPath = path.join(TEMP_DIR, newName);
+  response.data.pipe(writer);
 
-    const response = await axios.get(fileLink.href, {
-      responseType: "stream",
-    });
-
-    const writer = fs.createWriteStream(tempPath);
-    response.data.pipe(writer);
-
-    await new Promise((res, rej) => {
-      writer.on("finish", res);
-      writer.on("error", rej);
-    });
-
-    await ctx.replyWithDocument({ source: tempPath });
-
-    fs.unlinkSync(tempPath);
-  } catch (err) {
-    console.error(err);
-    ctx.reply("❌ Error while processing file");
-  }
+  writer.on("finish", () => {
+    ctx.reply("✅ Thumbnail saved successfully");
+  });
 });
 
-bot.launch();
-console.log("✅ File Renamer Bot Started");
+// =======================
+// FILE HANDLER
+// =======================
+bot.on(["video", "document"], async ctx => {
+  const msg = ctx.message;
+  const file = msg.video || msg.document;
+  const userId = ctx.from.id;
+
+  const fileSizeMB = (file.file_size / (1024 * 1024)).toFixed(1);
+  if (file.file_size > 300 * 1024 * 1024) {
+    return ctx.reply("❌ File too large. Max 300MB allowed.");
+  }
+
+  await ctx.reply(`📦 File received (${fileSizeMB} MB)\n⏳ Processing...`);
+
+  const fileLink = await ctx.telegram.getFileLink(file.file_id);
+  const ext = path.extname(file.file_name || ".bin");
+
+  const cleanName =
+    "AmrendraBots_" +
+    Date.now() +
+    ext;
+
+  const tempFilePath = path.join(TEMP_DIR, cleanName);
+
+  // Download file
+  const response = await axios.get(fileLink.href, { responseType: "stream" });
+  const writer = fs.createWriteStream(tempFilePath);
+  response.data.pipe(writer);
+
+  writer.on("finish", async () => {
+    const thumbPath = path.join(THUMB_DIR, `${userId}.jpg`);
+
+    const sendOptions = {};
+    if (fs.existsSync(thumbPath)) {
+      sendOptions.thumb = { source: thumbPath };
+    }
+
+    await ctx.reply("📤 Uploading renamed file...");
+
+    await ctx.replyWithDocument(
+      { source: tempFilePath, filename: cleanName },
+      sendOptions
+    );
+
+    fs.removeSync(tempFilePath);
+  });
+});
+
+// =======================
+// START BOT
+// =======================
+bot.launch().then(() => {
+  console.log("Bot started successfully");
+});
+
+// Graceful stop
+process.once("SIGINT", () => bot.stop("SIGINT"));
+process.once("SIGTERM", () => bot.stop("SIGTERM"));

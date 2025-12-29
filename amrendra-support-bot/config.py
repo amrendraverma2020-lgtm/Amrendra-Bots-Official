@@ -1,5 +1,0 @@
-API_ID = 34166001
-API_HASH = "d16ad5aaea50627d3d6f0753ca46e61d"
-
-BOT_TOKEN = "8569990435:AAEhUAM7ye7VFGrfzbVeenHOeOn1vUrnGuY"
-BOT_NAME = "Amrendra Support Bot"

@@ -8,9 +8,11 @@ app.use(express.json());
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const FORCE_CHANNEL = process.env.FORCE_CHANNEL; // without @
 const SUPPORT_BOT = process.env.SUPPORT_BOT || "amrendra_support_bot";
+const OWNER_ID = process.env.OWNER_ID; // numeric telegram id
+const PORT = process.env.PORT || 10000;
 
-if (!BOT_TOKEN || !FORCE_CHANNEL) {
-  throw new Error("BOT_TOKEN or FORCE_CHANNEL missing");
+if (!BOT_TOKEN || !FORCE_CHANNEL || !OWNER_ID) {
+  throw new Error("Missing required environment variables");
 }
 
 // ===== HEALTH CHECK =====
@@ -27,16 +29,23 @@ async function tg(method, body) {
   });
 }
 
-// ===== FORCE JOIN CHECK =====
+// ===== FORCE JOIN CHECK (OWNER BYPASS FIX) =====
 async function isJoined(userId) {
+  // Owner bypass
+  if (String(userId) === String(OWNER_ID)) {
+    return true;
+  }
+
   const res = await tg("getChatMember", {
     chat_id: `@${FORCE_CHANNEL}`,
     user_id: userId,
   });
+
   const data = await res.json();
-  return (
-    data.ok &&
-    ["member", "administrator", "creator"].includes(data.result.status)
+  if (!data.ok) return false;
+
+  return ["member", "administrator", "creator"].includes(
+    data.result.status
   );
 }
 
@@ -44,6 +53,12 @@ async function isJoined(userId) {
 const JOIN_MENU = {
   inline_keyboard: [
     [{ text: "🔔 Join Channel", url: `https://t.me/${FORCE_CHANNEL}` }],
+    [
+      {
+        text: "📩 Contact to Owner",
+        url: `https://t.me/${SUPPORT_BOT}?start=join_issue`
+      }
+    ],
     [{ text: "✅ I've Joined", callback_data: "check_join" }],
   ],
 };
@@ -56,8 +71,8 @@ const MAIN_MENU = {
     [{ text: "🔗 Useful Links", callback_data: "links" }],
     [
       {
-        text: "🛠 Support",
-        url: `https://t.me/${SUPPORT_BOT}?start=from_study_hub`,
+        text: "📩 Contact to Owner",
+        url: `https://t.me/${SUPPORT_BOT}?start=from_study_hub`
       },
     ],
   ],
@@ -70,13 +85,13 @@ const BACK_MENU = {
 // ===== TEXTS =====
 const WELCOME_TEXT =
   "👋 *Welcome to Study Resource Hub* 📘\n\n" +
-  "🎯 Your one-stop destination for curated academic resources,\n" +
-  "exam-oriented material, and useful learning tools.\n\n" +
-  "📚 What you can explore here:\n" +
-  "📄 Structured PDFs & Notes\n" +
-  "📝 Exam updates & important information\n" +
-  "🔗 Hand-picked educational links\n\n" +
-  "👇 Choose a section below to continue.";
+  "🎯 A dedicated place for curated academic resources\n" +
+  "and useful study material.\n\n" +
+  "📚 What you’ll find here:\n" +
+  "• Study PDFs & Notes\n" +
+  "• Exam-related information\n" +
+  "• Useful learning links\n\n" +
+  "👇 Please choose a section below to continue.";
 
 const MENU_TEXT =
   "📘 *Main Menu*\n\n👇 Select a section below to access curated study resources.";
@@ -88,18 +103,18 @@ const PDF_TEXT =
 
 const NOTES_TEXT =
   "📚 *Study Notes* 🖊️\n\n" +
-  "📖 Well-organized notes for quick revision\n" +
+  "📖 Well-organized notes for easy revision\n" +
   "will be available here shortly.";
 
 const EXAM_TEXT =
   "📝 *Exam Information* 📅\n\n" +
-  "🔔 Verified exam notifications and\n" +
-  "important updates will appear here.";
+  "🔔 Verified exam updates, notices\n" +
+  "and important dates will appear here.";
 
 const LINKS_TEXT =
   "🔗 *Useful Learning Links* 🌐\n\n" +
-  "⭐ Trusted educational and learning\n" +
-  "resources will be shared here.";
+  "⭐ Trusted educational tools and\n" +
+  "learning resources will be shared here.";
 
 // ===== WEBHOOK =====
 app.post("/", async (req, res) => {
@@ -219,8 +234,7 @@ app.post("/", async (req, res) => {
   }
 });
 
-// ===== START =====
-const PORT = process.env.PORT;
+// ===== START SERVER =====
 app.listen(PORT, () => {
   console.log("Study Resource Hub running on port", PORT);
 });

@@ -1,6 +1,7 @@
 {
   "name": "amrendra-file-to-link-bot",
   "version": "1.0.0",
+  "description": "Telegram File to Link Bot",
   "main": "index.js",
   "type": "commonjs",
   "scripts": {

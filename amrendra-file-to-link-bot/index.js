@@ -1,75 +1,72 @@
-// ===============================
-// Amrendra File Bot – STABLE BASE
-// ===============================
-
-// ---- Dummy HTTP Server (RENDER REQUIREMENT) ----
 const express = require("express");
+
 const app = express();
-
-const PORT = process.env.PORT || 10000;
-
-app.get("/", (req, res) => {
-  res.send("Amrendra File Bot is running");
-});
-
-app.listen(PORT, () => {
-  console.log("HTTP server running on port", PORT);
-});
-
-// ---- Telegram Bot (Telegraf) ----
-const { Telegraf } = require("telegraf");
+app.use(express.json());
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
+const HF_TOKEN = process.env.HF_TOKEN;
+const PORT = process.env.PORT || 10000;
 
-if (!BOT_TOKEN) {
-  console.error("❌ BOT_TOKEN missing in environment variables");
-  process.exit(1);
-}
-
-const bot = new Telegraf(BOT_TOKEN);
-
-// ---- START COMMAND ----
-bot.start((ctx) => {
-  ctx.reply(
-    "🤖 *Amrendra File Bot*\n\n" +
-      "📦 Send me a file (video / document)\n" +
-      "🛠 Processing logic will be added next.\n\n" +
-      "✅ Bot is running stable.",
-    { parse_mode: "Markdown" }
-  );
+// ===== HEALTH CHECK =====
+app.get("/", (req, res) => {
+  res.send("HuggingFace AI Bot is running");
 });
 
-// ---- FILE HANDLER (SAFE, NO DOWNLOAD) ----
-bot.on(["video", "document", "audio"], async (ctx) => {
+// ===== HUGGING FACE QUERY =====
+async function queryHuggingFace(text) {
+  const response = await fetch(
+    "https://api-inference.huggingface.co/models/google/flan-t5-small",
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${HF_TOKEN}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        inputs: text,
+      }),
+    }
+  );
+
+  const data = await response.json();
+
+  if (Array.isArray(data) && data[0]?.generated_text) {
+    return data[0].generated_text;
+  }
+
+  return "🤖 Sorry, I couldn't generate a reply right now.";
+}
+
+// ===== SEND MESSAGE =====
+async function sendMessage(chatId, text) {
+  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      chat_id: chatId,
+      text: text,
+    }),
+  });
+}
+
+// ===== TELEGRAM WEBHOOK =====
+app.post("/", async (req, res) => {
   try {
-    const msg = ctx.message;
-    let fileSize = 0;
+    const msg = req.body.message;
+    if (!msg || !msg.text) return res.send("ok");
 
-    if (msg.video) fileSize = msg.video.file_size;
-    else if (msg.document) fileSize = msg.document.file_size;
-    else if (msg.audio) fileSize = msg.audio.file_size;
+    const userText = msg.text;
+    const reply = await queryHuggingFace(userText);
 
-    const sizeMB = (fileSize / (1024 * 1024)).toFixed(1);
-
-    await ctx.reply(
-      `📦 *File received successfully*\n\n` +
-        `📊 Size: *${sizeMB} MB*\n\n` +
-        `🛠 Processing logic will be added next.`,
-      { parse_mode: "Markdown" }
-    );
+    await sendMessage(msg.chat.id, reply);
+    res.send("ok");
   } catch (err) {
-    console.error("File handler error:", err);
-    ctx.reply("⚠️ Something went wrong. Please try again.");
+    console.error("ERROR:", err);
+    res.send("ok");
   }
 });
 
-// ---- LAUNCH BOT (LONG POLLING SAFE) ----
-bot.launch({
-  dropPendingUpdates: true,
+// ===== START SERVER =====
+app.listen(PORT, () => {
+  console.log("Bot running on port", PORT);
 });
-
-console.log("✅ File Bot is running");
-
-// ---- GRACEFUL SHUTDOWN ----
-process.once("SIGINT", () => bot.stop("SIGINT"));
-process.once("SIGTERM", () => bot.stop("SIGTERM"));

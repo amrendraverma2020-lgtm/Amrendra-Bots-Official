@@ -1,12 +1,12 @@
 {
-  "name": "hf-telegram-bot",
+  "name": "amrendra-ai-bot",
   "version": "1.0.0",
-  "type": "commonjs",
   "main": "index.js",
+  "type": "commonjs",
   "scripts": {
     "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "telegraf": "^4.16.2"
   }
 }

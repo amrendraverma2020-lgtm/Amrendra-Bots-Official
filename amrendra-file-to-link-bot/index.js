@@ -4,18 +4,20 @@ const app = express();
 app.use(express.json());
 
 // ===== ENV VARIABLES =====
-const BOT_TOKEN = process.env.BOT_TOKEN;     // Telegram Bot Token
-const HF_TOKEN = process.env.HF_TOKEN;       // HuggingFace Token
+const BOT_TOKEN = process.env.BOT_TOKEN;   // Telegram Bot Token
+const HF_TOKEN = process.env.HF_TOKEN;     // HuggingFace Token
 const PORT = process.env.PORT || 10000;
 
-// ===== HEALTH CHECK (RENDER REQUIREMENT) =====
+// ===== HEALTH CHECK (RENDER KE LIYE ZAROORI) =====
 app.get("/", (req, res) => {
-  res.send("Amrendra AI Bot is running");
+  res.send("✅ Amrendra AI Bot is running");
 });
 
-// ===== SEND MESSAGE TO TELEGRAM =====
+// ===== TELEGRAM MESSAGE SEND =====
 async function sendMessage(chatId, text) {
-  await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`, {
+  const url = `https://api.telegram.org/bot${BOT_TOKEN}/sendMessage`;
+
+  await fetch(url, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -25,7 +27,7 @@ async function sendMessage(chatId, text) {
   });
 }
 
-// ===== ASK AI (HUGGING FACE) =====
+// ===== HUGGING FACE AI CALL =====
 async function askAI(prompt) {
   const response = await fetch(
     "https://api-inference.huggingface.co/models/google/flan-t5-small",
@@ -35,7 +37,9 @@ async function askAI(prompt) {
         "Authorization": `Bearer ${HF_TOKEN}`,
         "Content-Type": "application/json",
       },
-      body: JSON.stringify({ inputs: prompt }),
+      body: JSON.stringify({
+        inputs: prompt,
+      }),
     }
   );
 
@@ -45,29 +49,31 @@ async function askAI(prompt) {
     return data[0].generated_text;
   }
 
-  return "Sorry, I couldn't generate a reply right now.";
+  return "❌ AI reply generate nahi ho paayi. Thodi der baad try karo.";
 }
 
 // ===== TELEGRAM WEBHOOK =====
 app.post("/", async (req, res) => {
   try {
-    const msg = req.body.message;
-    if (!msg || !msg.text) return res.send("ok");
+    const message = req.body.message;
+    if (!message || !message.text) {
+      return res.send("ok");
+    }
 
-    const userText = msg.text;
-    const chatId = msg.chat.id;
+    const chatId = message.chat.id;
+    const userText = message.text;
 
     const aiReply = await askAI(userText);
     await sendMessage(chatId, aiReply);
 
     res.send("ok");
   } catch (err) {
-    console.error(err);
+    console.error("Error:", err);
     res.send("ok");
   }
 });
 
-// ===== START SERVER =====
+// ===== SERVER START =====
 app.listen(PORT, () => {
-  console.log("✅ Amrendra AI Bot running on port", PORT);
+  console.log("🚀 Amrendra AI Bot running on port", PORT);
 });

@@ -1,9 +1,11 @@
 {
   "users": {},
-  "blocked": {},
+  "queue": [],
   "stats": {
     "total_users": 0,
     "blocked_users": 0,
-    "broadcasts_sent": 0
+    "broadcasts_sent": 0,
+    "active_today": 0,
+    "per_bot_usage": {}
   }
 }

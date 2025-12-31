@@ -1,12 +1,13 @@
 {
-  "name": "verification-bot",
+  "name": "amrendra-verification-bot",
   "version": "1.0.0",
+  "description": "Central Verification Bot for Amrendra Bots Ecosystem",
   "main": "index.js",
-  "type": "commonjs",
-  "engines": {
-    "node": ">=18"
+  "scripts": {
+    "start": "node index.js"
   },
   "dependencies": {
-    "express": "^4.19.2"
+    "express": "^4.19.2",
+    "node-fetch": "^2.7.0"
   }
 }

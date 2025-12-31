@@ -1,0 +1,16 @@
+{
+  "name": "song-finder-bot",
+  "version": "1.0.0",
+  "description": "One-click song finder and redirect bot",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "node-fetch": "^2.6.7"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

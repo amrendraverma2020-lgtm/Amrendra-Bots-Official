@@ -7,8 +7,8 @@ const app = express();
 app.use(express.json());
 
 // ===== ENV =====
-const BOT_TOKEN = process.env.BOT_TOKEN;          // verification bot token
-const FORCE_CHANNEL = process.env.FORCE_CHANNEL;  // channel username (without @)
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const FORCE_CHANNEL = process.env.FORCE_CHANNEL;
 const PORT = process.env.PORT || 10000;
 
 if (!BOT_TOKEN || !FORCE_CHANNEL) {
@@ -18,10 +18,10 @@ if (!BOT_TOKEN || !FORCE_CHANNEL) {
 // ===== FILE =====
 const USERS_FILE = path.join(__dirname, "users.json");
 
-// ===== RETURN MAP =====
+// ===== RETURN MAP (UPDATED WITH start payload) =====
 const RETURN_BOTS = {
-  exam_notify: "https://t.me/amrendra_exam_notify_bot",
-  song_finder: "https://t.me/song_finder_bot"
+  exam_notify: "https://t.me/amrendra_exam_notify_bot?start=verified",
+  song_finder: "https://t.me/song_finder_bot?start=verified"
 };
 
 // ===== HELPERS =====
@@ -84,7 +84,6 @@ app.post("/", async (req, res) => {
     const chatId = msg.chat.id;
     const userId = msg.from.id;
 
-    // ===== payload identify =====
     const startText = update.message?.text || "";
     const payload = startText.split(" ")[1] || "exam_notify";
     const returnUrl = RETURN_BOTS[payload];
@@ -118,9 +117,8 @@ You can now continue using the bot.`,
       return res.send("ok");
     }
 
-    // ===== FIRST ENTRY / START =====
+    // ===== START =====
     if (update.message && update.message.text.startsWith("/start")) {
-      // User NOT joined
       if (!(await isJoined(userId))) {
         await tg("sendMessage", {
           chat_id: chatId,
@@ -138,7 +136,6 @@ Please complete the steps below to continue.`,
         return res.send("ok");
       }
 
-      // User JOINED
       await tg("sendMessage", {
         chat_id: chatId,
         text:

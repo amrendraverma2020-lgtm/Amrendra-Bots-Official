@@ -8,9 +8,7 @@ app.use(express.json());
 
 // ===== ENV =====
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const OWNER_ID = String(process.env.OWNER_ID);
-const VERIFY_BOT = "amrendra_verification_bot";
-const SUPPORT_BOT = "amrendra_support_bot";
+const OWNER_ID = process.env.OWNER_ID;
 const PORT = process.env.PORT || 10000;
 
 if (!BOT_TOKEN || !OWNER_ID) {
@@ -20,7 +18,7 @@ if (!BOT_TOKEN || !OWNER_ID) {
 // ===== FILE =====
 const USERS_FILE = path.join(__dirname, "users.json");
 
-// ===== HELPERS =====
+// ===== TELEGRAM HELPER =====
 async function tg(method, body) {
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
     method: "POST",
@@ -38,27 +36,49 @@ function loadUsers() {
   }
 }
 
-function saveUsers(users) {
-  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
-}
-
-function upsertUser(user) {
+function saveUser(user) {
   const users = loadUsers();
-  const idx = users.findIndex(u => u.user_id === user.user_id);
-  if (idx === -1) users.push(user);
-  else users[idx] = { ...users[idx], ...user };
-  saveUsers(users);
+  if (!users.find(u => u.user_id === user.user_id)) {
+    users.push(user);
+    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  }
 }
 
 // ===== HEALTH =====
-app.get("/", (_, res) => res.send("Exam Notify Desk running"));
+app.get("/", (_, res) => {
+  res.send("Exam Notify Desk is running");
+});
 
 // ===== WEBHOOK =====
 app.post("/", async (req, res) => {
   try {
     const update = req.body;
 
-    // ================= /start =================
+    // ===== RETURN FROM VERIFICATION =====
+    if (update.message && update.message.text === "/start verified") {
+      const chatId = update.message.chat.id;
+      const user = update.message.from;
+
+      saveUser({
+        user_id: user.id,
+        username: user.username || null,
+        verified: true
+      });
+
+      await tg("sendMessage", {
+        chat_id: chatId,
+        text:
+`✅ You are now an eligible member of this bot.
+
+Please send the name of the exam
+or the type of exam-related information
+you are looking for.`,
+      });
+
+      return res.send("ok");
+    }
+
+    // ===== NORMAL START =====
     if (update.message && update.message.text === "/start") {
       const chatId = update.message.chat.id;
 
@@ -70,26 +90,13 @@ app.post("/", async (req, res) => {
 This bot provides important exam-related
 updates, notices, and alerts.
 
-
-🔒 Access to this bot is limited.
-Verification is required to continue.
-
-
-✅ Once verified, you may proceed.`,
+🔒 Verification is required to continue.`,
         reply_markup: {
           inline_keyboard: [
-            [
-              {
-                text: "🔔 Verify Access",
-                url: `https://t.me/${VERIFY_BOT}?start=exam_notify`
-              }
-            ],
-            [
-              {
-                text: "📩 Contact Support",
-                url: `https://t.me/${SUPPORT_BOT}?start=exam_notify`
-              }
-            ]
+            [{
+              text: "🔐 Verify Access",
+              url: "https://t.me/amrendra_verification_bot?start=exam_notify"
+            }]
           ]
         }
       });
@@ -97,111 +104,37 @@ Verification is required to continue.
       return res.send("ok");
     }
 
-    // ================= VERIFICATION CALLBACK =================
-    // Verification bot should redirect user with: /verified
-    if (update.message && update.message.text === "/verified") {
-      const msg = update.message;
-      const user = {
-        user_id: msg.from.id,
-        username: msg.from.username || null,
-        verified: true,
-        exam_interest: null
-      };
-
-      upsertUser(user);
-
-      await tg("sendMessage", {
-        chat_id: msg.chat.id,
-        text:
-`✅ Verification Successful!
-
-You are now an eligible member of this bot.
-
-You can now send the name of the exam
-or the type of exam-related information
-you are looking for.
-
-Our team will review your request
-and keep you updated accordingly.`
-      });
-
-      return res.send("ok");
-    }
-
-    // ================= USER EXAM REQUEST =================
+    // ===== USER MESSAGE (EXAM INTEREST) =====
     if (update.message && update.message.text) {
-      const msg = update.message;
-      const text = msg.text.trim();
+      const chatId = update.message.chat.id;
+      const user = update.message.from;
 
-      // Ignore owner admin replies
-      if (String(msg.chat.id) === OWNER_ID && text.startsWith("@")) {
-        const parts = text.split("\n");
-        const username = parts[0].replace("@", "").trim();
-        const replyText = parts.slice(1).join("\n").trim();
-
-        const users = loadUsers();
-        const target = users.find(u => u.username === username);
-
-        if (!target) {
-          await tg("sendMessage", {
-            chat_id: OWNER_ID,
-            text: "❌ User not found."
-          });
-          return res.send("ok");
-        }
-
-        await tg("sendMessage", {
-          chat_id: target.user_id,
-          text:
-`📢 Exam Update
-
-${replyText}`
-        });
-
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text: "✅ Message sent to user."
-        });
-
-        return res.send("ok");
-      }
-
-      // Normal user message (exam interest)
-      const users = loadUsers();
-      const user = users.find(u => u.user_id === msg.from.id);
-
-      if (!user || !user.verified) {
-        return res.send("ok");
-      }
-
-      upsertUser({
-        ...user,
-        exam_interest: text
+      saveUser({
+        user_id: user.id,
+        username: user.username || null,
+        verified: true,
+        interest: update.message.text
       });
 
-      // Forward to owner
       await tg("sendMessage", {
         chat_id: OWNER_ID,
         text:
 `📩 New Exam Request
 
-👤 User: ${msg.from.username ? "@" + msg.from.username : "No username"}
-🆔 User ID: ${msg.from.id}
+👤 User: ${user.username ? "@" + user.username : user.first_name}
+🆔 ID: ${user.id}
 
-📝 Request:
-${text}`
+📘 Interest:
+${update.message.text}`
       });
 
       await tg("sendMessage", {
-        chat_id: msg.chat.id,
+        chat_id: chatId,
         text:
-`📨 Request Sent Successfully!
-
-Your message has been forwarded
-to the managing team.
+`✅ Your request has been sent successfully.
 
 You will receive updates related
-to this exam as soon as they are available.`
+to this exam here.`
       });
 
       return res.send("ok");

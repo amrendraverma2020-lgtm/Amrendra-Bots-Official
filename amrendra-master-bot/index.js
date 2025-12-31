@@ -1,18 +1,19 @@
 const express = require("express");
 const fetch = require("node-fetch");
+const fs = require("fs");
 
 const app = express();
 app.use(express.json());
 
-// ===================== ENV =====================
+// ================= ENV =================
 const MASTER_TOKEN = process.env.MASTER_BOT_TOKEN;
-const OWNER_ID = String(process.env.OWNER_ID || "");
+const OWNER_ID = String(process.env.OWNER_ID);
 const PORT = process.env.PORT || 10000;
 
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "20", 10);
 const BATCH_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS || "3000", 10);
 
-// 21 bot tokens (empty ignored)
+// 21 bot tokens (empty ignored safely)
 const BOT_TOKENS = Array.from({ length: 21 }, (_, i) =>
   process.env[`BOT_${i + 1}_TOKEN`]
 ).filter(Boolean);
@@ -21,7 +22,15 @@ if (!MASTER_TOKEN || !OWNER_ID) {
   throw new Error("Missing MASTER_BOT_TOKEN or OWNER_ID");
 }
 
-// ===================== HELPERS =====================
+// ================= DB =================
+const DB_FILE = "./db.json";
+let DB = JSON.parse(fs.readFileSync(DB_FILE));
+
+function saveDB() {
+  fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
+}
+
+// ================= HELPERS =================
 async function tg(method, body, token = MASTER_TOKEN) {
   const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
     method: "POST",
@@ -30,13 +39,10 @@ async function tg(method, body, token = MASTER_TOKEN) {
   });
   return res.json();
 }
+
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-// ===================== STATE =====================
-let pending = { text: null, selectedBots: new Set() };
-let lastReport = null;
-
-// ===================== SECURITY =====================
+// ================= SECURITY =================
 function ownerOnly(update) {
   const uid =
     update?.message?.from?.id ||
@@ -44,162 +50,135 @@ function ownerOnly(update) {
   return String(uid) === OWNER_ID;
 }
 
-// ===================== UI =====================
-function botButtons() {
-  const rows = [];
+// ================= STATE =================
+let pendingMessage = null;
+let emergencyStop = false;
+let lastReport = null;
 
-  for (let i = 0; i < 21; i++) {
-    if (!process.env[`BOT_${i + 1}_TOKEN`]) continue;
-    const checked = pending.selectedBots.has(i + 1) ? "✅" : "☑️";
-    rows.push([
-      { text: `${checked} BOT ${i + 1}`, callback_data: `toggle:${i + 1}` },
-    ]);
-  }
+// ================= CORE LOGIC =================
 
-  rows.push([{ text: "✔️ Select All", callback_data: "select_all" }]);
-  rows.push([
-    { text: "🚀 Send Message", callback_data: "confirm" },
-    { text: "❌ Cancel", callback_data: "cancel" },
-  ]);
-
-  return { inline_keyboard: rows };
+// Central registry read (safe)
+function getEligibleUsers() {
+  return Object.values(DB.users).filter(
+    (u) => u.verified === true && u.blocked !== true
+  );
 }
 
-// ===================== SEND =====================
-async function sendViaBots(messageText) {
-  let usersTargeted = 0;
+// Broadcast engine (real but DB-driven)
+async function broadcast(text) {
+  const users = getEligibleUsers();
+
+  let sent = 0;
   let failed = 0;
 
   for (const token of BOT_TOKENS) {
-    // ⚠️ Replace this later with real user lists per bot
-    const targets = [OWNER_ID];
+    for (let i = 0; i < users.length; i += BATCH_SIZE) {
+      if (emergencyStop) break;
 
-    usersTargeted += targets.length;
-
-    for (let i = 0; i < targets.length; i += BATCH_SIZE) {
-      const batch = targets.slice(i, i + BATCH_SIZE);
+      const batch = users.slice(i, i + BATCH_SIZE);
 
       const results = await Promise.all(
-        batch.map((uid) =>
-          tg("sendMessage", { chat_id: uid, text: messageText }, token)
+        batch.map((u) =>
+          tg("sendMessage", { chat_id: u.id, text }, token)
             .then(() => true)
             .catch(() => false)
         )
       );
 
+      sent += results.filter(Boolean).length;
       failed += results.filter((r) => !r).length;
+
       await sleep(BATCH_DELAY_MS);
     }
   }
 
+  emergencyStop = false;
+
+  DB.stats.broadcasts_sent += 1;
+  saveDB();
+
   return {
-    botsUsed: BOT_TOKENS.length,
-    usersTargeted,
-    attempts: usersTargeted,
+    usersTargeted: users.length,
+    sent,
     failed,
   };
 }
 
-// ===================== ROUTES =====================
-app.get("/", (_, res) => res.send("Amrendra Master Bot running"));
+// ================= ROUTES =================
+app.get("/", (_, res) => {
+  res.send("Amrendra Master Bot – Phase 1 running");
+});
 
 app.post("/", async (req, res) => {
   try {
     const u = req.body;
     if (!ownerOnly(u)) return res.send("ok");
 
-    // ===== START =====
+    // START
     if (u.message?.text === "/start") {
       await tg("sendMessage", {
         chat_id: OWNER_ID,
         text:
-          "👋 Welcome, Amrendra\n\n" +
-          "This is your private broadcast console.\n" +
-          "You control what goes out.\n" +
-          "Nothing moves without your command.\n\n" +
-          "Send a message to begin.",
+          "👋 Welcome Amrendra\n\n" +
+          "This is the MASTER CONTROL BOT.\n\n" +
+          "• Central broadcast engine\n" +
+          "• Global block system (ready)\n" +
+          "• Analytics base (ready)\n\n" +
+          "Send a message to begin broadcast.",
       });
       return res.send("ok");
     }
 
-    // ===== NEW MESSAGE =====
+    // NEW MESSAGE
     if (u.message?.text) {
-      pending.text = u.message.text;
-      pending.selectedBots.clear();
+      pendingMessage = u.message.text;
 
       await tg("sendMessage", {
         chat_id: OWNER_ID,
         text:
-          "📨 Message to broadcast:\n\n" +
-          `"${pending.text}"\n\n` +
-          "Select target bots below 👇",
-        reply_markup: botButtons(),
+          "📨 Broadcast Message Ready:\n\n" +
+          `"${pendingMessage}"\n\n` +
+          "Send /confirm to broadcast\n" +
+          "Send /cancel to abort",
       });
       return res.send("ok");
     }
 
-    // ===== BUTTONS =====
-    if (u.callback_query) {
-      const d = u.callback_query.data;
+    // CONFIRM
+    if (u.message?.text === "/confirm" && pendingMessage) {
+      lastReport = await broadcast(pendingMessage);
 
-      if (d.startsWith("toggle:")) {
-        const n = parseInt(d.split(":")[1], 10);
-        pending.selectedBots.has(n)
-          ? pending.selectedBots.delete(n)
-          : pending.selectedBots.add(n);
-      } 
-      else if (d === "select_all") {
-        pending.selectedBots.clear();
-        for (let i = 1; i <= 21; i++) {
-          if (process.env[`BOT_${i}_TOKEN`]) pending.selectedBots.add(i);
-        }
-      } 
-      else if (d === "confirm") {
-        lastReport = await sendViaBots(pending.text);
-
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text: "✅ Message sent successfully.",
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "📥 Delivery Report", callback_data: "report" }],
-            ],
-          },
-        });
-
-        pending = { text: null, selectedBots: new Set() };
-      } 
-      else if (d === "report" && lastReport) {
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text:
-            "📥 Delivery Report\n\n" +
-            `Bots used: ${lastReport.botsUsed}\n` +
-            `Users targeted: ${lastReport.usersTargeted}\n` +
-            `Send attempts: ${lastReport.attempts}\n` +
-            `Failed: ${lastReport.failed}`,
-        });
-      } 
-      else if (d === "cancel") {
-        pending = { text: null, selectedBots: new Set() };
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text: "❌ Cancelled.",
-        });
-      }
-
-      await tg("answerCallbackQuery", {
-        callback_query_id: u.callback_query.id,
+      await tg("sendMessage", {
+        chat_id: OWNER_ID,
+        text:
+          "✅ Message sent successfully.\n\n" +
+          "📥 Delivery Report\n" +
+          `Users targeted: ${lastReport.usersTargeted}\n` +
+          `Sent: ${lastReport.sent}\n` +
+          `Failed: ${lastReport.failed}`,
       });
 
-      if (pending.text) {
-        await tg("editMessageReplyMarkup", {
-          chat_id: OWNER_ID,
-          message_id: u.callback_query.message.message_id,
-          reply_markup: botButtons(),
-        });
-      }
+      pendingMessage = null;
+      return res.send("ok");
+    }
 
+    // CANCEL
+    if (u.message?.text === "/cancel") {
+      pendingMessage = null;
+      await tg("sendMessage", {
+        chat_id: OWNER_ID,
+        text: "❌ Broadcast cancelled.",
+      });
+      return res.send("ok");
+    }
+
+    // EMERGENCY STOP
+    if (u.message?.text === "/stop") {
+      emergencyStop = true;
+      await tg("sendMessage", {
+        chat_id: OWNER_ID,
+        text: "🛑 Emergency stop activated.",
+      });
       return res.send("ok");
     }
 
@@ -210,7 +189,7 @@ app.post("/", async (req, res) => {
   }
 });
 
-// ===================== START =====================
+// ================= START =================
 app.listen(PORT, () => {
-  console.log("Amrendra Master Bot running on port", PORT);
+  console.log("Amrendra Master Bot – Phase 1 running on port", PORT);
 });

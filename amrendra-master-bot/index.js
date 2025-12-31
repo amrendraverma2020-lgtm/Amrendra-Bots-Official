@@ -13,7 +13,7 @@ const PORT = process.env.PORT || 10000;
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "20", 10);
 const BATCH_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS || "3000", 10);
 
-// 🔥 Unlimited bots via ENV
+// 🔥 Unlimited bots (comma separated)
 const BOT_TOKENS = (process.env.BOT_TOKENS || "")
   .split(",")
   .map(t => t.trim())
@@ -26,7 +26,7 @@ if (!MASTER_TOKEN || !OWNER_ID) {
 // ================= DB =================
 const DB_FILE = "./db.json";
 let DB = {
-  users: {},
+  users: {},       // { userId: { id, verified, blocked, warnings, bots[] } }
   queue: [],
   stats: {
     broadcasts_sent: 0
@@ -110,6 +110,10 @@ function botButtons() {
   });
 
   rows.push([
+    { text: "✅ Select All Bots", callback_data: "select_all" }
+  ]);
+
+  rows.push([
     { text: "🚀 Send Message", callback_data: "send" },
     { text: "❌ Cancel", callback_data: "cancel" }
   ]);
@@ -150,6 +154,7 @@ async function sendNow(text, users) {
 // ================= BROADCAST =================
 async function broadcast(text, botIndexes = []) {
   const users = getEligibleUsers(botIndexes);
+
   DB.queue.push({ text, targets: users });
   saveDB();
 
@@ -198,9 +203,9 @@ app.post("/", async (req, res) => {
         text:
           "👋 *Welcome Amrendra*\n\n" +
           "This is your MASTER CONTROL BOT.\n\n" +
-          "• Global broadcast engine\n" +
-          "• Bot-wise targeting\n" +
+          "• Bot-wise broadcast\n" +
           "• Fail-safe queue\n" +
+          "• Rate-limited sending\n" +
           "• Global block & warning sync\n\n" +
           "Send a message or template key to begin.",
         parse_mode: "Markdown",
@@ -238,6 +243,11 @@ app.post("/", async (req, res) => {
         });
       }
 
+      else if (d === "select_all") {
+        pendingBots.clear();
+        BOT_TOKENS.forEach((_, i) => pendingBots.add(i));
+      }
+
       else if (d.startsWith("toggle:")) {
         const id = parseInt(d.split(":")[1], 10);
         pendingBots.has(id)
@@ -248,11 +258,26 @@ app.post("/", async (req, res) => {
       else if (d === "send" && pendingText) {
         const count = await broadcast(pendingText, [...pendingBots]);
 
+        let resultText =
+          "✅ *Broadcast Processed*\n\n";
+
+        if (count === 0) {
+          resultText +=
+            "⚠️ No users received this message.\n\n" +
+            "Reason:\n" +
+            "• No verified users in database\n" +
+            "• Child bots have not registered users yet\n\n" +
+            "💡 Once users join & verify via other bots,\n" +
+            "broadcasts will start reaching them automatically.";
+        } else {
+          resultText +=
+            `📥 Users targeted: ${count}\n` +
+            "🚀 Message delivered successfully.";
+        }
+
         await tg("sendMessage", {
           chat_id: OWNER_ID,
-          text:
-            "✅ *Message Sent Successfully*\n\n" +
-            `📥 Users targeted: ${count}`,
+          text: resultText,
           parse_mode: "Markdown"
         });
 
@@ -301,5 +326,5 @@ app.post("/", async (req, res) => {
 
 // ================= START =================
 app.listen(PORT, () => {
-  console.log("Amrendra Master Bot — SYSTEM STATUS READY on port", PORT);
+  console.log("Amrendra Master Bot — FINAL SYSTEM ACTIVE on port", PORT);
 });

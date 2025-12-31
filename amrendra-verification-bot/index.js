@@ -1,20 +1,33 @@
 const express = require("express");
 const fetch = require("node-fetch");
 const fs = require("fs");
-const path = require("path");
 
 const app = express();
 app.use(express.json());
 
-// ===== ENV =====
+// ================= ENV =================
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const FORCE_CHANNEL = process.env.FORCE_CHANNEL; // without @
+const FORCE_CHANNEL = process.env.FORCE_CHANNEL;
 const PORT = process.env.PORT || 10000;
 
-// ===== FILE =====
-const VERIFIED_FILE = path.join(__dirname, "verified_users.json");
+if (!BOT_TOKEN || !FORCE_CHANNEL) {
+  throw new Error("Missing BOT_TOKEN or FORCE_CHANNEL");
+}
 
-// ===== HELPERS =====
+// ================= DB =================
+const DB_FILE = "./db.json";
+let DB = { users: {} };
+
+if (fs.existsSync(DB_FILE)) {
+  try {
+    DB = JSON.parse(fs.readFileSync(DB_FILE));
+  } catch {}
+}
+
+const saveDB = () =>
+  fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
+
+// ================= TG HELPER =================
 async function tg(method, body) {
   const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
     method: "POST",
@@ -24,98 +37,154 @@ async function tg(method, body) {
   return res.json();
 }
 
-function loadVerified() {
-  try {
-    return JSON.parse(fs.readFileSync(VERIFIED_FILE, "utf8"));
-  } catch {
-    return [];
-  }
-}
-
-function saveVerified(userId) {
-  const list = loadVerified();
-  if (!list.includes(userId)) {
-    list.push(userId);
-    fs.writeFileSync(VERIFIED_FILE, JSON.stringify(list, null, 2));
-  }
-}
-
+// ================= CHANNEL CHECK =================
 async function isJoined(userId) {
-  const res = await tg("getChatMember", {
+  const data = await tg("getChatMember", {
     chat_id: `@${FORCE_CHANNEL}`,
     user_id: userId,
   });
-  if (!res.ok) return false;
-  return ["member", "administrator", "creator"].includes(res.result.status);
+  if (!data.ok) return false;
+  return ["member", "administrator", "creator"].includes(data.result.status);
 }
 
-// ===== HEALTH =====
-app.get("/", (_, res) => {
-  res.send("Amrendra Verification Bot running");
-});
+// ================= RETURN URL (DYNAMIC) =================
+function getReturnUrl(payload) {
+  return (
+    process.env[`RETURN_${payload}`] ||
+    process.env.RETURN_default ||
+    "https://t.me"
+  );
+}
 
-// ===== WEBHOOK =====
+// ================= WEBHOOK =================
 app.post("/", async (req, res) => {
   try {
     const msg = req.body.message;
-    if (!msg || !msg.text) return res.send("ok");
+    const cq = req.body.callback_query;
 
-    const chatId = msg.chat.id;
-    const userId = msg.from.id;
+    // ================= MESSAGE =================
+    if (msg && msg.text) {
+      const chatId = msg.chat.id;
+      const userId = msg.from.id;
+      const username = msg.from.username || "";
+      const firstName = msg.from.first_name || "";
 
-    // Welcome
-    await tg("sendMessage", {
-      chat_id: chatId,
-      text:
-`👋 Welcome
+      const payload = msg.text.split(" ")[1] || "default";
+      const returnUrl = getReturnUrl(payload);
 
-Verification process has started.
-Please wait while we check your eligibility.`,
-    });
+      const user = DB.users[userId];
 
-    // Check channel
-    if (!(await isJoined(userId))) {
+      // ===== ALREADY VERIFIED =====
+      if (user?.verified && await isJoined(userId)) {
+        await tg("sendMessage", {
+          chat_id: chatId,
+          text:
+            "✅ *Already Verified*\n\nYou may continue.",
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "➡️ Continue", url: returnUrl }]
+            ]
+          }
+        });
+        return res.send("ok");
+      }
+
+      // ===== NOT JOINED =====
+      if (!(await isJoined(userId))) {
+        await tg("sendMessage", {
+          chat_id: chatId,
+          text:
+            "🔒 *Verification Required*\n\n" +
+            "Join the official channel to continue.",
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "🔔 Join Channel", url: `https://t.me/${FORCE_CHANNEL}` }],
+              [{ text: "🔁 I have joined", callback_data: `recheck:${payload}` }]
+            ]
+          }
+        });
+        return res.send("ok");
+      }
+
+      // ===== VERIFIED =====
+      DB.users[userId] = {
+        id: userId,
+        username,
+        name: firstName,
+        verified: true,
+        bots: Array.from(new Set([...(user?.bots || []), payload])),
+        blocked: false,
+        warnings: user?.warnings || 0,
+        verified_at: Date.now()
+      };
+
+      saveDB();
+
       await tg("sendMessage", {
         chat_id: chatId,
         text:
-`❌ You are not verified yet.
-
-To continue, please join the official channel
-and then click the button below.`,
+          "✅ *Verification Successful*\n\nYou may continue.",
+        parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "🔔 Join Channel", url: `https://t.me/${FORCE_CHANNEL}` }],
-            [{ text: "✅ I Have Joined", callback_data: "recheck" }],
-          ],
-        },
+            [{ text: "➡️ Continue to bot", url: returnUrl }]
+          ]
+        }
       });
+
       return res.send("ok");
     }
 
-    // Verified
-    saveVerified(userId);
+    // ================= CALLBACK =================
+    if (cq) {
+      const chatId = cq.message.chat.id;
+      const userId = cq.from.id;
 
-    await tg("sendMessage", {
-      chat_id: chatId,
-      text:
-`✅ Verification Successful
+      if (cq.data.startsWith("recheck:")) {
+        const payload = cq.data.split(":")[1] || "default";
+        const returnUrl = getReturnUrl(payload);
 
-You are now an eligible member.
-You may return to the bot and continue.`,
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "➡️ Go Back to Bot", url: "https://t.me/amrendra_exam_notify_bot" }],
-        ],
-      },
-    });
+        if (await isJoined(userId)) {
+          DB.users[userId] = {
+            id: userId,
+            verified: true,
+            bots: [payload],
+            blocked: false,
+            warnings: 0,
+            verified_at: Date.now()
+          };
+          saveDB();
 
-    res.send("ok");
+          await tg("sendMessage", {
+            chat_id: chatId,
+            text: "✅ *Verification Successful*",
+            parse_mode: "Markdown",
+            reply_markup: {
+              inline_keyboard: [
+                [{ text: "➡️ Continue", url: returnUrl }]
+              ]
+            }
+          });
+        } else {
+          await tg("answerCallbackQuery", {
+            callback_query_id: cq.id,
+            text: "❌ Channel not joined yet.",
+            show_alert: true
+          });
+        }
+      }
+    }
+
+    return res.send("ok");
   } catch (e) {
     console.error(e);
-    res.send("ok");
+    return res.send("ok");
   }
 });
 
+// ================= START =================
 app.listen(PORT, () => {
   console.log("Verification Bot running on port", PORT);
 });

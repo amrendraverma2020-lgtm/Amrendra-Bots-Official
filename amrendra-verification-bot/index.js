@@ -1,6 +1,7 @@
 const express = require("express");
 const fetch = require("node-fetch");
 const fs = require("fs");
+const path = require("path");
 
 const app = express();
 app.use(express.json());
@@ -14,9 +15,13 @@ if (!BOT_TOKEN || !FORCE_CHANNEL) {
   throw new Error("Missing BOT_TOKEN or FORCE_CHANNEL");
 }
 
-// ================= DB =================
-const DB_FILE = "./db.json";
-let DB = { users: {} };
+// ================= CENTRAL DB =================
+// ⚠️ SAME DB as Master Bot
+const DB_FILE = path.join(__dirname, "../central-db/users.json");
+
+let DB = {
+  users: {}
+};
 
 if (fs.existsSync(DB_FILE)) {
   try {
@@ -108,14 +113,14 @@ app.post("/", async (req, res) => {
         return res.send("ok");
       }
 
-      // ===== VERIFIED =====
+      // ===== VERIFIED (CENTRAL SAVE) =====
       DB.users[userId] = {
         id: userId,
         username,
         name: firstName,
         verified: true,
         bots: Array.from(new Set([...(user?.bots || []), payload])),
-        blocked: false,
+        blocked: user?.blocked || false,
         warnings: user?.warnings || 0,
         verified_at: Date.now()
       };
@@ -147,14 +152,19 @@ app.post("/", async (req, res) => {
         const returnUrl = getReturnUrl(payload);
 
         if (await isJoined(userId)) {
+          const user = DB.users[userId] || {};
+
           DB.users[userId] = {
             id: userId,
+            username: user.username || "",
+            name: user.name || "",
             verified: true,
-            bots: [payload],
-            blocked: false,
-            warnings: 0,
+            bots: Array.from(new Set([...(user.bots || []), payload])),
+            blocked: user.blocked || false,
+            warnings: user.warnings || 0,
             verified_at: Date.now()
           };
+
           saveDB();
 
           await tg("sendMessage", {
@@ -186,5 +196,5 @@ app.post("/", async (req, res) => {
 
 // ================= START =================
 app.listen(PORT, () => {
-  console.log("Verification Bot running on port", PORT);
+  console.log("Verification Bot — CENTRAL DB CONNECTED on port", PORT);
 });

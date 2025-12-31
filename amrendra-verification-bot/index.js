@@ -1,15 +1,15 @@
 /**
  * ============================================================
- * Amrendra Verification Bot
- * ------------------------------------------------------------
+ * AMRENDRA VERIFICATION BOT — FINAL STABLE BUILD
+ * ============================================================
  * Purpose:
- * - Central verification gateway for all Amrendra bots
- * - Saves verified users in CENTRAL DB (shared with Master Bot)
- * - Enforces channel join before access
- * - Returns user back to original bot automatically
+ * - Central verification gateway
+ * - Saves users into CENTRAL DB
+ * - Enforces channel join
+ * - Returns user to original bot
+ * - Fully compatible with Master Bot
  *
- * Author: Amrendra
- * Status: Production Ready (Render Compatible)
+ * STATUS: ✅ PRODUCTION READY (RENDER SAFE)
  * ============================================================
  */
 
@@ -30,7 +30,7 @@ const FORCE_CHANNEL = process.env.FORCE_CHANNEL; // without @
 const PORT = process.env.PORT || 10000;
 
 if (!BOT_TOKEN || !FORCE_CHANNEL) {
-  throw new Error("❌ BOT_TOKEN or FORCE_CHANNEL missing in environment");
+  throw new Error("❌ BOT_TOKEN or FORCE_CHANNEL missing");
 }
 
 /* ============================================================
@@ -39,35 +39,18 @@ if (!BOT_TOKEN || !FORCE_CHANNEL) {
 
 const DB_FILE = path.join(__dirname, "../central-db/users.json");
 
-/**
- * DB structure:
- * {
- *   users: {
- *     userId: {
- *       id,
- *       username,
- *       name,
- *       verified,
- *       bots[],
- *       blocked,
- *       warnings,
- *       verified_at
- *     }
- *   }
- * }
- */
-
 let DB = { users: {} };
 
+// 🔥 Ensure DB exists
 try {
-  if (fs.existsSync(DB_FILE)) {
-    DB = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-  } else {
+  if (!fs.existsSync(DB_FILE)) {
     fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
     fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
+  } else {
+    DB = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
   }
 } catch (err) {
-  console.error("❌ DB Load Error:", err);
+  console.error("❌ DB INIT ERROR:", err);
 }
 
 function saveDB() {
@@ -79,32 +62,28 @@ function saveDB() {
    ============================================================ */
 
 async function tg(method, body) {
-  const res = await fetch(
-    `https://api.telegram.org/bot${BOT_TOKEN}/${method}`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    }
-  );
-  return res.json();
+  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body)
+  }).then(r => r.json());
 }
 
 /* ============================================================
-   CHANNEL MEMBERSHIP CHECK
+   CHANNEL JOIN CHECK
    ============================================================ */
 
 async function isJoined(userId) {
   try {
-    const data = await tg("getChatMember", {
+    const res = await tg("getChatMember", {
       chat_id: `@${FORCE_CHANNEL}`,
-      user_id: userId,
+      user_id: userId
     });
 
-    if (!data.ok) return false;
+    if (!res.ok) return false;
 
     return ["member", "administrator", "creator"].includes(
-      data.result.status
+      res.result.status
     );
   } catch {
     return false;
@@ -112,7 +91,7 @@ async function isJoined(userId) {
 }
 
 /* ============================================================
-   RETURN URL HANDLER (DYNAMIC – UNLIMITED BOTS)
+   RETURN URL HANDLER
    ============================================================ */
 
 function getReturnUrl(payload) {
@@ -124,10 +103,13 @@ function getReturnUrl(payload) {
 }
 
 /* ============================================================
-   WEBHOOK HANDLER
+   WEBHOOK HANDLER (CRITICAL SECTION)
    ============================================================ */
 
 app.post("/", async (req, res) => {
+  // 🔥 MUST RESPOND IMMEDIATELY (Telegram Rule)
+  res.send("ok");
+
   try {
     const msg = req.body.message;
     const cq = req.body.callback_query;
@@ -141,63 +123,62 @@ app.post("/", async (req, res) => {
       const username = msg.from.username || "";
       const firstName = msg.from.first_name || "";
 
-      // payload example: /start exam
       const payload = msg.text.split(" ")[1] || "default";
       const returnUrl = getReturnUrl(payload);
 
       const existingUser = DB.users[userId];
 
-      /* ================= ALREADY VERIFIED ================= */
-      if (existingUser?.verified && (await isJoined(userId))) {
+      /* ---------- ALREADY VERIFIED ---------- */
+      if (existingUser?.verified && await isJoined(userId)) {
         await tg("sendMessage", {
           chat_id: chatId,
           parse_mode: "Markdown",
           text:
-            "✅ *Verification Status: ACTIVE*\n\n" +
-            "You are already verified in our system.\n\n" +
-            "🔐 You have full access to all allowed services.\n\n" +
-            "Tap the button below to continue where you came from 👇",
+            "🎉 *Verification Successful!*\n\n" +
+            "Your identity has been securely verified.\n\n" +
+            "✅ Status: *ACTIVE*\n" +
+            "🧠 System: *Synced with Master Control*\n\n" +
+            "You can now continue safely.",
           reply_markup: {
             inline_keyboard: [
-              [{ text: "➡️ Continue", url: returnUrl }],
-            ],
-          },
+              [{ text: "➡️ Continue to Bot", url: returnUrl }]
+            ]
+          }
         });
-        return res.send("ok");
+        return;
       }
 
-      /* ================= NOT JOINED ================= */
+      /* ---------- NOT JOINED ---------- */
       if (!(await isJoined(userId))) {
         await tg("sendMessage", {
           chat_id: chatId,
           parse_mode: "Markdown",
           text:
             "🔒 *Verification Required*\n\n" +
-            "To protect our system from spam and abuse,\n" +
-            "joining our official channel is mandatory.\n\n" +
+            "To protect our system, joining the official channel is mandatory.\n\n" +
             "📢 Channel: @" + FORCE_CHANNEL + "\n\n" +
-            "👉 Join first, then click *I Have Joined*.",
+            "After joining, click *I Have Joined* below.",
           reply_markup: {
             inline_keyboard: [
               [
                 {
                   text: "🔔 Join Official Channel",
-                  url: `https://t.me/${FORCE_CHANNEL}`,
-                },
+                  url: `https://t.me/${FORCE_CHANNEL}`
+                }
               ],
               [
                 {
                   text: "🔁 I Have Joined",
-                  callback_data: `recheck:${payload}`,
-                },
-              ],
-            ],
-          },
+                  callback_data: `recheck:${payload}`
+                }
+              ]
+            ]
+          }
         });
-        return res.send("ok");
+        return;
       }
 
-      /* ================= VERIFIED & SAVE ================= */
+      /* ---------- VERIFIED & SAVE ---------- */
       DB.users[userId] = {
         id: userId,
         username,
@@ -208,10 +189,12 @@ app.post("/", async (req, res) => {
         ),
         blocked: existingUser?.blocked || false,
         warnings: existingUser?.warnings || 0,
-        verified_at: Date.now(),
+        verified_at: Date.now()
       };
 
       saveDB();
+
+      console.log("✅ USER SAVED:", DB.users[userId]);
 
       await tg("sendMessage", {
         chat_id: chatId,
@@ -219,23 +202,27 @@ app.post("/", async (req, res) => {
         text:
           "🎉 *Verification Successful!*\n\n" +
           "Your identity has been securely verified.\n\n" +
-          "✅ Status: ACTIVE\n" +
-          "🧠 System: Synced with Master Control\n\n" +
+          "✅ Status: *ACTIVE*\n" +
+          "🧠 System: *Synced with Master Control*\n\n" +
           "You can now continue safely.",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "➡️ Continue to Bot", url: returnUrl }],
-          ],
-        },
+            [{ text: "➡️ Continue to Bot", url: returnUrl }]
+          ]
+        }
       });
-
-      return res.send("ok");
+      return;
     }
 
     /* ========================================================
        CALLBACK HANDLER
        ======================================================== */
     if (cq) {
+      // 🔥 VERY IMPORTANT
+      await tg("answerCallbackQuery", {
+        callback_query_id: cq.id
+      });
+
       const chatId = cq.message.chat.id;
       const userId = cq.from.id;
 
@@ -256,40 +243,37 @@ app.post("/", async (req, res) => {
             ),
             blocked: oldUser.blocked || false,
             warnings: oldUser.warnings || 0,
-            verified_at: Date.now(),
+            verified_at: Date.now()
           };
 
           saveDB();
+
+          console.log("✅ USER VERIFIED VIA CALLBACK:", DB.users[userId]);
 
           await tg("sendMessage", {
             chat_id: chatId,
             parse_mode: "Markdown",
             text:
-              "✅ *Verification Completed*\n\n" +
-              "Thank you for joining our channel.\n\n" +
-              "You may now proceed safely.",
+              "🎉 *Verification Successful!*\n\n" +
+              "Your identity has been securely verified.\n\n" +
+              "You can now continue safely.",
             reply_markup: {
               inline_keyboard: [
-                [{ text: "➡️ Continue", url: returnUrl }],
-              ],
-            },
+                [{ text: "➡️ Continue to Bot", url: returnUrl }]
+              ]
+            }
           });
         } else {
           await tg("answerCallbackQuery", {
             callback_query_id: cq.id,
             show_alert: true,
-            text:
-              "❌ Channel not joined yet.\n\n" +
-              "Please join the channel first.",
+            text: "❌ Channel not joined yet."
           });
         }
       }
     }
-
-    return res.send("ok");
   } catch (err) {
-    console.error("❌ Runtime Error:", err);
-    return res.send("ok");
+    console.error("❌ VERIFICATION BOT ERROR:", err);
   }
 });
 
@@ -299,7 +283,7 @@ app.post("/", async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(
-    "✅ Verification Bot is LIVE and connected to CENTRAL DB on port",
+    "✅ VERIFICATION BOT LIVE | CENTRAL DB CONNECTED | PORT:",
     PORT
   );
 });

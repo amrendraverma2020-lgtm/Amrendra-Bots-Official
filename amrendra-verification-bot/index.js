@@ -1,4 +1,4 @@
-const express = require("express");
+onst express = require("express");
 const fetch = require("node-fetch");
 const fs = require("fs");
 const path = require("path");
@@ -16,30 +16,26 @@ if (!BOT_TOKEN || !FORCE_CHANNEL) {
 }
 
 // ================= CENTRAL DB =================
-// ⚠️ SAME DB as Master Bot
 const DB_FILE = path.join(__dirname, "../central-db/users.json");
 
-let DB = {
-  users: {}
-};
-
-if (fs.existsSync(DB_FILE)) {
-  try {
-    DB = JSON.parse(fs.readFileSync(DB_FILE));
-  } catch {}
+// ✅ AUTO CREATE CENTRAL DB
+if (!fs.existsSync(DB_FILE)) {
+  fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
+  fs.writeFileSync(DB_FILE, JSON.stringify({ users: {} }, null, 2));
 }
+
+let DB = JSON.parse(fs.readFileSync(DB_FILE));
 
 const saveDB = () =>
   fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
 
 // ================= TG HELPER =================
 async function tg(method, body) {
-  const res = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
+  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
-  });
-  return res.json();
+  }).then(r => r.json());
 }
 
 // ================= CHANNEL CHECK =================
@@ -48,26 +44,27 @@ async function isJoined(userId) {
     chat_id: `@${FORCE_CHANNEL}`,
     user_id: userId,
   });
-  if (!data.ok) return false;
-  return ["member", "administrator", "creator"].includes(data.result.status);
+  return data.ok &&
+    ["member", "administrator", "creator"].includes(data.result.status);
 }
 
-// ================= RETURN URL (DYNAMIC) =================
+// ================= RETURN URL =================
 function getReturnUrl(payload) {
-  return (
-    process.env[`RETURN_${payload}`] ||
-    process.env.RETURN_default ||
-    "https://t.me"
-  );
+  return process.env[`RETURN_${payload}`] ||
+         process.env.RETURN_default ||
+         "https://t.me";
 }
 
 // ================= WEBHOOK =================
 app.post("/", async (req, res) => {
+  // 🔥 MOST IMPORTANT LINE
+  res.send("ok");
+
   try {
     const msg = req.body.message;
     const cq = req.body.callback_query;
 
-    // ================= MESSAGE =================
+    // ============ MESSAGE ============
     if (msg && msg.text) {
       const chatId = msg.chat.id;
       const userId = msg.from.id;
@@ -79,29 +76,23 @@ app.post("/", async (req, res) => {
 
       const user = DB.users[userId];
 
-      // ===== ALREADY VERIFIED =====
+      // ALREADY VERIFIED
       if (user?.verified && await isJoined(userId)) {
-        await tg("sendMessage", {
+        return tg("sendMessage", {
           chat_id: chatId,
-          text:
-            "✅ *Already Verified*\n\nYou may continue.",
+          text: "✅ *Already Verified*",
           parse_mode: "Markdown",
           reply_markup: {
-            inline_keyboard: [
-              [{ text: "➡️ Continue", url: returnUrl }]
-            ]
+            inline_keyboard: [[{ text: "➡️ Continue", url: returnUrl }]]
           }
         });
-        return res.send("ok");
       }
 
-      // ===== NOT JOINED =====
+      // NOT JOINED
       if (!(await isJoined(userId))) {
-        await tg("sendMessage", {
+        return tg("sendMessage", {
           chat_id: chatId,
-          text:
-            "🔒 *Verification Required*\n\n" +
-            "Join the official channel to continue.",
+          text: "🔒 *Verification Required*\n\nJoin channel first.",
           parse_mode: "Markdown",
           reply_markup: {
             inline_keyboard: [
@@ -110,10 +101,9 @@ app.post("/", async (req, res) => {
             ]
           }
         });
-        return res.send("ok");
       }
 
-      // ===== VERIFIED (CENTRAL SAVE) =====
+      // VERIFIED → CENTRAL SAVE
       DB.users[userId] = {
         id: userId,
         username,
@@ -127,74 +117,59 @@ app.post("/", async (req, res) => {
 
       saveDB();
 
-      await tg("sendMessage", {
+      return tg("sendMessage", {
         chat_id: chatId,
-        text:
-          "✅ *Verification Successful*\n\nYou may continue.",
+        text: "✅ *Verification Successful*",
         parse_mode: "Markdown",
         reply_markup: {
-          inline_keyboard: [
-            [{ text: "➡️ Continue to bot", url: returnUrl }]
-          ]
+          inline_keyboard: [[{ text: "➡️ Continue", url: returnUrl }]]
         }
       });
-
-      return res.send("ok");
     }
 
-    // ================= CALLBACK =================
-    if (cq) {
+    // ============ CALLBACK ============
+    if (cq && cq.data.startsWith("recheck:")) {
       const chatId = cq.message.chat.id;
       const userId = cq.from.id;
+      const payload = cq.data.split(":")[1] || "default";
+      const returnUrl = getReturnUrl(payload);
 
-      if (cq.data.startsWith("recheck:")) {
-        const payload = cq.data.split(":")[1] || "default";
-        const returnUrl = getReturnUrl(payload);
+      await tg("answerCallbackQuery", {
+        callback_query_id: cq.id
+      });
 
-        if (await isJoined(userId)) {
-          const user = DB.users[userId] || {};
+      if (await isJoined(userId)) {
+        const user = DB.users[userId] || {};
 
-          DB.users[userId] = {
-            id: userId,
-            username: user.username || "",
-            name: user.name || "",
-            verified: true,
-            bots: Array.from(new Set([...(user.bots || []), payload])),
-            blocked: user.blocked || false,
-            warnings: user.warnings || 0,
-            verified_at: Date.now()
-          };
+        DB.users[userId] = {
+          id: userId,
+          username: user.username || "",
+          name: user.name || "",
+          verified: true,
+          bots: Array.from(new Set([...(user.bots || []), payload])),
+          blocked: user.blocked || false,
+          warnings: user.warnings || 0,
+          verified_at: Date.now()
+        };
 
-          saveDB();
+        saveDB();
 
-          await tg("sendMessage", {
-            chat_id: chatId,
-            text: "✅ *Verification Successful*",
-            parse_mode: "Markdown",
-            reply_markup: {
-              inline_keyboard: [
-                [{ text: "➡️ Continue", url: returnUrl }]
-              ]
-            }
-          });
-        } else {
-          await tg("answerCallbackQuery", {
-            callback_query_id: cq.id,
-            text: "❌ Channel not joined yet.",
-            show_alert: true
-          });
-        }
+        return tg("sendMessage", {
+          chat_id: chatId,
+          text: "✅ *Verification Successful*",
+          parse_mode: "Markdown",
+          reply_markup: {
+            inline_keyboard: [[{ text: "➡️ Continue", url: returnUrl }]]
+          }
+        });
       }
     }
-
-    return res.send("ok");
   } catch (e) {
-    console.error(e);
-    return res.send("ok");
+    console.error("Verification bot error:", e);
   }
 });
 
 // ================= START =================
 app.listen(PORT, () => {
-  console.log("Verification Bot — CENTRAL DB CONNECTED on port", PORT);
+  console.log("✅ Verification Bot — CENTRAL DB CONNECTED on port", PORT);
 });

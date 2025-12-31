@@ -8,7 +8,7 @@ app.use(express.json());
 
 // ===== ENV =====
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const OWNER_ID = process.env.OWNER_ID;
+const OWNER_ID = String(process.env.OWNER_ID);
 const PORT = process.env.PORT || 10000;
 
 if (!BOT_TOKEN || !OWNER_ID) {
@@ -28,6 +28,7 @@ async function tg(method, body) {
   return res.json();
 }
 
+// ===== USER STORAGE =====
 function loadUsers() {
   try {
     return JSON.parse(fs.readFileSync(USERS_FILE, "utf8"));
@@ -36,17 +37,22 @@ function loadUsers() {
   }
 }
 
-function saveUser(user) {
+function saveOrUpdateUser(user) {
   const users = loadUsers();
-  if (!users.find(u => u.user_id === user.user_id)) {
+  const idx = users.findIndex(u => u.user_id === user.user_id);
+
+  if (idx === -1) {
     users.push(user);
-    fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
+  } else {
+    users[idx] = { ...users[idx], ...user };
   }
+
+  fs.writeFileSync(USERS_FILE, JSON.stringify(users, null, 2));
 }
 
 // ===== HEALTH =====
 app.get("/", (_, res) => {
-  res.send("Exam Notify Desk is running");
+  res.send("Exam Notify Desk running");
 });
 
 // ===== WEBHOOK =====
@@ -54,12 +60,12 @@ app.post("/", async (req, res) => {
   try {
     const update = req.body;
 
-    // ===== RETURN FROM VERIFICATION =====
+    // ================= VERIFIED RETURN =================
     if (update.message && update.message.text === "/start verified") {
       const chatId = update.message.chat.id;
       const user = update.message.from;
 
-      saveUser({
+      saveOrUpdateUser({
         user_id: user.id,
         username: user.username || null,
         verified: true
@@ -78,7 +84,7 @@ you are looking for.`,
       return res.send("ok");
     }
 
-    // ===== NORMAL START =====
+    // ================= NORMAL START =================
     if (update.message && update.message.text === "/start") {
       const chatId = update.message.chat.id;
 
@@ -104,12 +110,49 @@ updates, notices, and alerts.
       return res.send("ok");
     }
 
-    // ===== USER MESSAGE (EXAM INTEREST) =====
+    // ================= OWNER → USER MESSAGE =================
+    if (
+      update.message &&
+      String(update.message.chat.id) === OWNER_ID &&
+      update.message.text.startsWith("@")
+    ) {
+      const text = update.message.text.trim();
+      const username = text.split("\n")[0].replace("@", "").trim();
+      const message = text.replace("@" + username, "").trim();
+
+      const users = loadUsers();
+      const target = users.find(u => u.username === username);
+
+      if (!target) {
+        await tg("sendMessage", {
+          chat_id: OWNER_ID,
+          text: "❌ User not found."
+        });
+        return res.send("ok");
+      }
+
+      await tg("sendMessage", {
+        chat_id: target.user_id,
+        text:
+`📢 Exam Update
+
+${message}`
+      });
+
+      await tg("sendMessage", {
+        chat_id: OWNER_ID,
+        text: "✅ Message sent successfully."
+      });
+
+      return res.send("ok");
+    }
+
+    // ================= USER EXAM REQUEST =================
     if (update.message && update.message.text) {
       const chatId = update.message.chat.id;
       const user = update.message.from;
 
-      saveUser({
+      saveOrUpdateUser({
         user_id: user.id,
         username: user.username || null,
         verified: true,

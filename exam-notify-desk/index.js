@@ -134,7 +134,7 @@ updates, notices, and alerts.
       await tg("sendMessage", {
         chat_id: target.user_id,
         text:
-`📢 Exam Update
+`📢 Official Exam Notification
 
 ${message}`
       });

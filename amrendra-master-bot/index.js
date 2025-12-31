@@ -1,6 +1,7 @@
 const express = require("express");
 const fetch = require("node-fetch");
 const fs = require("fs");
+const path = require("path");
 
 const app = express();
 app.use(express.json());
@@ -13,20 +14,24 @@ const PORT = process.env.PORT || 10000;
 const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "20", 10);
 const BATCH_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS || "3000", 10);
 
-// 🔥 Unlimited bots (comma separated)
+// 🔥 Unlimited bots with names (name:token)
 const BOT_TOKENS = (process.env.BOT_TOKENS || "")
   .split(",")
-  .map(t => t.trim())
+  .map(pair => {
+    const [name, token] = pair.split(":");
+    return name && token ? { name, token } : null;
+  })
   .filter(Boolean);
 
 if (!MASTER_TOKEN || !OWNER_ID) {
   throw new Error("Missing MASTER_BOT_TOKEN or OWNER_ID");
 }
 
-// ================= DB =================
-const DB_FILE = "./db.json";
+// ================= CENTRAL DB =================
+const DB_FILE = path.join(__dirname, "../central-db/users.json");
+
 let DB = {
-  users: {},       // { userId: { id, verified, blocked, warnings, bots[] } }
+  users: {},   // userId -> user object
   queue: [],
   stats: {
     broadcasts_sent: 0
@@ -85,7 +90,9 @@ function getEligibleUsers(selectedBotIndexes = []) {
     if (selectedBotIndexes.length === 0) return true;
     if (!Array.isArray(u.bots)) return false;
 
-    return selectedBotIndexes.some(b => u.bots.includes(b));
+    return selectedBotIndexes.some(i =>
+      u.bots.includes(BOT_TOKENS[i]?.name)
+    );
   });
 }
 
@@ -102,16 +109,17 @@ function mainMenu() {
 function botButtons() {
   const rows = [];
 
-  BOT_TOKENS.forEach((_, i) => {
+  BOT_TOKENS.forEach((bot, i) => {
     const checked = pendingBots.has(i) ? "✅" : "☑️";
     rows.push([
-      { text: `${checked} BOT ${i + 1}`, callback_data: `toggle:${i}` }
+      {
+        text: `${checked} ${bot.name.toUpperCase()}`,
+        callback_data: `toggle:${i}`
+      }
     ]);
   });
 
-  rows.push([
-    { text: "✅ Select All Bots", callback_data: "select_all" }
-  ]);
+  rows.push([{ text: "✅ Select All Bots", callback_data: "select_all" }]);
 
   rows.push([
     { text: "🚀 Send Message", callback_data: "send" },
@@ -131,18 +139,18 @@ async function processQueue() {
 }
 
 async function sendNow(text, users) {
-  for (const token of BOT_TOKENS) {
+  for (const bot of BOT_TOKENS) {
     for (let i = 0; i < users.length; i += BATCH_SIZE) {
       if (emergencyStop) break;
 
       const batch = users.slice(i, i + BATCH_SIZE);
       await Promise.all(
         batch.map(u =>
-          tg("sendMessage", {
-            chat_id: u.id,
-            text,
-            parse_mode: "Markdown"
-          }, token).catch(() => {})
+          tg(
+            "sendMessage",
+            { chat_id: u.id, text, parse_mode: "Markdown" },
+            bot.token
+          ).catch(() => {})
         )
       );
 
@@ -170,17 +178,12 @@ async function broadcast(text, botIndexes = []) {
 function getSystemStatus() {
   const users = Object.values(DB.users);
 
-  const total = users.length;
-  const verified = users.filter(u => u.verified).length;
-  const blocked = users.filter(u => u.blocked).length;
-  const warned = users.filter(u => (u.warnings || 0) > 0).length;
-
   return (
     "📊 *Live System Status*\n\n" +
-    `👥 Total users: ${total}\n` +
-    `✅ Verified users: ${verified}\n` +
-    `🚫 Blocked users: ${blocked}\n` +
-    `⚠️ Warned users: ${warned}\n\n` +
+    `👥 Total users: ${users.length}\n` +
+    `✅ Verified: ${users.filter(u => u.verified).length}\n` +
+    `🚫 Blocked: ${users.filter(u => u.blocked).length}\n` +
+    `⚠️ Warned: ${users.filter(u => (u.warnings || 0) > 0).length}\n\n` +
     `🤖 Bots connected: ${BOT_TOKENS.length}\n` +
     `📨 Broadcasts sent: ${DB.stats.broadcasts_sent}`
   );
@@ -258,26 +261,24 @@ app.post("/", async (req, res) => {
       else if (d === "send" && pendingText) {
         const count = await broadcast(pendingText, [...pendingBots]);
 
-        let resultText =
+        let msg =
           "✅ *Broadcast Processed*\n\n";
 
         if (count === 0) {
-          resultText +=
+          msg +=
             "⚠️ No users received this message.\n\n" +
             "Reason:\n" +
             "• No verified users in database\n" +
             "• Child bots have not registered users yet\n\n" +
-            "💡 Once users join & verify via other bots,\n" +
-            "broadcasts will start reaching them automatically.";
+            "💡 Once users verify via other bots,\n" +
+            "broadcasts will auto-start.";
         } else {
-          resultText +=
-            `📥 Users targeted: ${count}\n` +
-            "🚀 Message delivered successfully.";
+          msg += `📥 Users targeted: ${count}`;
         }
 
         await tg("sendMessage", {
           chat_id: OWNER_ID,
-          text: resultText,
+          text: msg,
           parse_mode: "Markdown"
         });
 

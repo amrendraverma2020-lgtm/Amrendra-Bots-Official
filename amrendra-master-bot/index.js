@@ -33,10 +33,8 @@ async function tg(method, body, token = MASTER_TOKEN) {
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 // ===================== STATE =====================
-let pending = {
-  text: null,
-  selectedBots: new Set(),
-};
+let pending = { text: null, selectedBots: new Set() };
+let lastReport = null;
 
 // ===================== SECURITY =====================
 function ownerOnly(update) {
@@ -54,17 +52,11 @@ function botButtons() {
     if (!process.env[`BOT_${i + 1}_TOKEN`]) continue;
     const checked = pending.selectedBots.has(i + 1) ? "✅" : "☑️";
     rows.push([
-      {
-        text: `${checked} BOT ${i + 1}`,
-        callback_data: `toggle:${i + 1}`,
-      },
+      { text: `${checked} BOT ${i + 1}`, callback_data: `toggle:${i + 1}` },
     ]);
   }
 
-  rows.push([
-    { text: "✔️ Select All", callback_data: "select_all" },
-  ]);
-
+  rows.push([{ text: "✔️ Select All", callback_data: "select_all" }]);
   rows.push([
     { text: "🚀 Send Message", callback_data: "confirm" },
     { text: "❌ Cancel", callback_data: "cancel" },
@@ -73,44 +65,64 @@ function botButtons() {
   return { inline_keyboard: rows };
 }
 
-// ===================== SEND REAL MESSAGES =====================
+// ===================== SEND =====================
 async function sendViaBots(messageText) {
-  let total = 0;
+  let usersTargeted = 0;
+  let failed = 0;
 
   for (const token of BOT_TOKENS) {
-    // ⚠️ IMPORTANT:
-    // Yahan har bot apne USERS pe bhejega.
-    // Abhi demo ke liye OWNER_ID use ho raha hai.
+    // ⚠️ Replace this later with real user lists per bot
     const targets = [OWNER_ID];
+
+    usersTargeted += targets.length;
 
     for (let i = 0; i < targets.length; i += BATCH_SIZE) {
       const batch = targets.slice(i, i + BATCH_SIZE);
-      await Promise.all(
+
+      const results = await Promise.all(
         batch.map((uid) =>
           tg("sendMessage", { chat_id: uid, text: messageText }, token)
-            .catch(() => null)
+            .then(() => true)
+            .catch(() => false)
         )
       );
-      total += batch.length;
+
+      failed += results.filter((r) => !r).length;
       await sleep(BATCH_DELAY_MS);
     }
   }
 
-  return total;
+  return {
+    botsUsed: BOT_TOKENS.length,
+    usersTargeted,
+    attempts: usersTargeted,
+    failed,
+  };
 }
 
 // ===================== ROUTES =====================
-app.get("/", (_, res) => {
-  res.send("Amrendra Master Bot running");
-});
+app.get("/", (_, res) => res.send("Amrendra Master Bot running"));
 
 app.post("/", async (req, res) => {
   try {
     const u = req.body;
-
     if (!ownerOnly(u)) return res.send("ok");
 
-    // ===== TEXT MESSAGE =====
+    // ===== START =====
+    if (u.message?.text === "/start") {
+      await tg("sendMessage", {
+        chat_id: OWNER_ID,
+        text:
+          "👋 Welcome, Amrendra\n\n" +
+          "This is your private broadcast console.\n" +
+          "You control what goes out.\n" +
+          "Nothing moves without your command.\n\n" +
+          "Send a message to begin.",
+      });
+      return res.send("ok");
+    }
+
+    // ===== NEW MESSAGE =====
     if (u.message?.text) {
       pending.text = u.message.text;
       pending.selectedBots.clear();
@@ -118,15 +130,15 @@ app.post("/", async (req, res) => {
       await tg("sendMessage", {
         chat_id: OWNER_ID,
         text:
-          "👋 Welcome, Amrendra\n\n" +
-          "This is your private control desk.\n" +
-          "Select which bots should receive your message.",
+          "📨 Message to broadcast:\n\n" +
+          `"${pending.text}"\n\n` +
+          "Select target bots below 👇",
         reply_markup: botButtons(),
       });
       return res.send("ok");
     }
 
-    // ===== BUTTON HANDLING =====
+    // ===== BUTTONS =====
     if (u.callback_query) {
       const d = u.callback_query.data;
 
@@ -143,14 +155,30 @@ app.post("/", async (req, res) => {
         }
       } 
       else if (d === "confirm") {
-        await sendViaBots(pending.text);
+        lastReport = await sendViaBots(pending.text);
 
         await tg("sendMessage", {
           chat_id: OWNER_ID,
           text: "✅ Message sent successfully.",
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "📥 Delivery Report", callback_data: "report" }],
+            ],
+          },
         });
 
         pending = { text: null, selectedBots: new Set() };
+      } 
+      else if (d === "report" && lastReport) {
+        await tg("sendMessage", {
+          chat_id: OWNER_ID,
+          text:
+            "📥 Delivery Report\n\n" +
+            `Bots used: ${lastReport.botsUsed}\n` +
+            `Users targeted: ${lastReport.usersTargeted}\n` +
+            `Send attempts: ${lastReport.attempts}\n` +
+            `Failed: ${lastReport.failed}`,
+        });
       } 
       else if (d === "cancel") {
         pending = { text: null, selectedBots: new Set() };

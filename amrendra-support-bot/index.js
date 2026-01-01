@@ -1,7 +1,7 @@
 /**
  * ============================================================
  * AMRENDRA SUPPORT BOT
- * FINAL • FULLY FUNCTIONAL • OWNER SAFE
+ * FINAL • STABLE • ALL FEATURES WORKING
  * ============================================================
  */
 
@@ -22,100 +22,69 @@ if (!BOT_TOKEN || !OWNER_ID) {
   throw new Error("BOT_TOKEN or OWNER_ID missing");
 }
 
-/* ================= FILE PATHS ================= */
-const USERS_FILE = path.join(__dirname, "users.json");        // []
-const WARNS_FILE = path.join(__dirname, "warns.json");        // {}
-const BLOCKS_FILE = path.join(__dirname, "blocks.json");      // {}
+/* ================= FILES ================= */
+const USERS_FILE = path.join(__dirname, "users.json"); // []
+const WARNS_FILE = path.join(__dirname, "warns.json"); // {}
+const BLOCKS_FILE = path.join(__dirname, "blocks.json"); // {}
 const HISTORY_FILE = path.join(__dirname, "block_history.json"); // []
 
 /* ================= HELPERS ================= */
 const now = () => Date.now();
+const read = (f, d) => { try { return JSON.parse(fs.readFileSync(f)); } catch { return d; } };
+const write = (f, d) => fs.writeFileSync(f, JSON.stringify(d, null, 2));
 
-function readJSON(file, def) {
-  try { return JSON.parse(fs.readFileSync(file, "utf8")); }
-  catch { return def; }
-}
-
-function writeJSON(file, data) {
-  fs.writeFileSync(file, JSON.stringify(data, null, 2));
-}
-
-/* ================= TELEGRAM ================= */
 async function tg(method, body) {
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
-  }).then(r => r.json());
+  }).catch(()=>{});
 }
 
-/* ================= USER SAVE (PERMANENT) ================= */
-function saveUser(userId, username) {
-  const users = readJSON(USERS_FILE, []);
-  if (!users.find(u => u.user_id === userId)) {
-    users.push({ user_id: userId, username });
-    writeJSON(USERS_FILE, users);
+/* ================= USER SAVE ================= */
+function saveUser(id, username) {
+  const users = read(USERS_FILE, []);
+  if (!users.find(u => u.user_id === id)) {
+    users.push({ user_id: id, username });
+    write(USERS_FILE, users);
   }
 }
 
-/* ================= WARN CLEANUP ================= */
-function cleanupWarns() {
-  const warns = readJSON(WARNS_FILE, {});
-  let changed = false;
-
+/* ================= CLEANUP ================= */
+function cleanup() {
+  /* WARN EXPIRY */
+  const warns = read(WARNS_FILE, {});
   for (const id in warns) {
     const active = warns[id].filter(w => w.expires > now());
     if (active.length !== warns[id].length) {
-      changed = true;
-      tg("sendMessage", { chat_id: id, text: "ℹ️ A warning has expired." }).catch(()=>{});
-      tg("sendMessage", { chat_id: OWNER_ID, text: `ℹ️ Warning expired for ${id}` }).catch(()=>{});
+      tg("sendMessage", { chat_id: id, text: "ℹ️ A warning has expired." });
+      tg("sendMessage", { chat_id: OWNER_ID, text: `ℹ️ Warning expired for ${id}` });
     }
     active.length ? warns[id] = active : delete warns[id];
   }
+  write(WARNS_FILE, warns);
 
-  if (changed) writeJSON(WARNS_FILE, warns);
-}
-
-/* ================= BLOCK CLEANUP ================= */
-function cleanupBlocks() {
-  const blocks = readJSON(BLOCKS_FILE, {});
-  const history = readJSON(HISTORY_FILE, []);
-  const active = {};
-  const cutoff = now() - 30 * 24 * 60 * 60 * 1000;
-
+  /* BLOCK EXPIRY */
+  const blocks = read(BLOCKS_FILE, {});
+  const hist = read(HISTORY_FILE, []);
+  const activeBlocks = {};
   for (const id in blocks) {
-    if (blocks[id].until > now()) {
-      active[id] = blocks[id];
-    } else {
-      history.push({ ...blocks[id], expired_at: now() });
-
-      tg("sendMessage", {
-        chat_id: id,
-        text: "✅ You have been automatically unblocked."
-      }).catch(()=>{});
-
-      tg("sendMessage", {
-        chat_id: OWNER_ID,
-        text: `🔓 User ${id} auto-unblocked`
-      }).catch(()=>{});
+    if (blocks[id].until > now()) activeBlocks[id] = blocks[id];
+    else {
+      hist.push({ ...blocks[id], expired_at: now() });
+      tg("sendMessage", { chat_id: id, text: "✅ You have been automatically unblocked." });
+      tg("sendMessage", { chat_id: OWNER_ID, text: `🔓 User ${id} auto-unblocked` });
     }
   }
-
-  writeJSON(BLOCKS_FILE, active);
-  writeJSON(
-    HISTORY_FILE,
-    history.filter(h => h.expired_at > cutoff)
-  );
+  write(BLOCKS_FILE, activeBlocks);
+  write(HISTORY_FILE, hist.filter(h => h.expired_at > now() - 30*24*60*60*1000));
 }
 
 /* ================= WEBHOOK ================= */
 app.post("/", async (req, res) => {
   res.send("ok");
-
   try {
-    cleanupWarns();
-    cleanupBlocks();
-
+    cleanup();
     const msg = req.body.message;
     if (!msg) return;
 
@@ -125,8 +94,7 @@ app.post("/", async (req, res) => {
 
     saveUser(userId, username);
 
-    /* ================= BLOCK CHECK ================= */
-    const blocks = readJSON(BLOCKS_FILE, {});
+    const blocks = read(BLOCKS_FILE, {});
     if (blocks[userId]) {
       const b = blocks[userId];
       await tg("sendMessage", {
@@ -136,205 +104,160 @@ app.post("/", async (req, res) => {
 
 Reason: ${b.reason}
 
-⏳ Block Duration: ${b.duration}
-You will be automatically unblocked after ${b.duration}.`
+⏳ Block Duration: ${b.duration}`
       });
       return;
     }
 
-    /* ================= START ================= */
+    /* START */
     if (msg.text === "/start") {
       await tg("sendMessage", {
         chat_id: chatId,
-        parse_mode: "Markdown",
         text:
-`👋 *Welcome to Amrendra Support Bot*
+`👋 Welcome to Amrendra Support Bot
 
-Thank you for contacting us 🙏
+Send your issue in ONE clear message.
+Our team will reply here itself.
 
-📌 *How this works:*
-• Send your issue in ONE clear message
-• Your message goes directly to the support team
-• You will receive reply here itself
-
-⏳ *Response Time:*
-Please wait patiently for a response
-
-⚠️ Misuse or spam may lead to temporary block.`
+⚠️ Misuse may lead to block.`
       });
       return;
     }
 
     /* ================= OWNER COMMANDS ================= */
-    if (chatId === OWNER_ID && msg.text?.startsWith("/")) {
+    if (chatId === OWNER_ID && msg.text) {
       const parts = msg.text.split(" ");
       const cmd = parts[0];
       const target = parts[1];
 
       if (target === OWNER_ID) {
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text: "❌ Safety Lock: You cannot target yourself."
-        });
+        await tg("sendMessage", { chat_id: OWNER_ID, text: "❌ You cannot target yourself." });
         return;
       }
 
-      /* /warn */
+      /* WARN */
       if (cmd === "/warn") {
         const reason = parts.slice(2).join(" ") || "No reason";
-        const warns = readJSON(WARNS_FILE, {});
+        const warns = read(WARNS_FILE, {});
         warns[target] = warns[target] || [];
-        warns[target].push({
-          reason,
-          expires: now() + 30 * 24 * 60 * 60 * 1000
-        });
-        writeJSON(WARNS_FILE, warns);
+        warns[target].push({ reason, expires: now()+30*24*60*60*1000 });
+        write(WARNS_FILE, warns);
 
-        await tg("sendMessage", {
-          chat_id: target,
-          text:
-`⚠️ Warning Issued
-
-Reason: ${reason}
-
-⚠️ 3 warnings = auto block (48 hours)`
-        });
+        await tg("sendMessage", { chat_id: target, text: `⚠️ Warning\nReason: ${reason}` });
 
         if (warns[target].length >= 3) {
-          const blocks = readJSON(BLOCKS_FILE, {});
+          const blocks = read(BLOCKS_FILE, {});
           blocks[target] = {
-            reason: "Auto-block due to 3 warnings",
+            reason: "Auto-block (3 warnings)",
             duration: "48 hours",
-            until: now() + 48 * 60 * 60 * 1000
+            until: now()+48*60*60*1000
           };
-          writeJSON(BLOCKS_FILE, blocks);
-
-          await tg("sendMessage", {
-            chat_id: target,
-            text:
-`⛔ Auto Blocked
-
-Reason: 3 warnings received
-⏳ Block Duration: 48 hours`
-          });
+          write(BLOCKS_FILE, blocks);
+          await tg("sendMessage", { chat_id: target, text: "⛔ Auto-blocked for 48 hours" });
         }
 
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text: `⚠️ Warn added to ${target}`
-        });
+        await tg("sendMessage", { chat_id: OWNER_ID, text: `⚠️ Warn added to ${target}` });
         return;
       }
 
-      /* /warnlist */
+      /* WARNLIST */
       if (cmd === "/warnlist") {
         const id = target || OWNER_ID;
-        const warns = readJSON(WARNS_FILE, {});
+        const warns = read(WARNS_FILE, {});
         const list = warns[id] || [];
         let text = `⚠️ Warn List for ${id}\n\n`;
-        text += list.length
-          ? list.map((w,i)=>`${i+1}. ${w.reason}`).join("\n")
-          : "No active warnings.";
+        text += list.length ? list.map((w,i)=>`${i+1}. ${w.reason}`).join("\n") : "No active warnings.";
         await tg("sendMessage", { chat_id: chatId, text });
         return;
       }
 
-      /* /block /block24 */
+      /* BLOCK / BLOCK24 */
       if (cmd === "/block" || cmd === "/block24") {
         const reason = parts.slice(2).join(" ") || "No reason";
-        const blocks = readJSON(BLOCKS_FILE, {});
+        const blocks = read(BLOCKS_FILE, {});
         blocks[target] = {
           reason,
-          duration: cmd === "/block24" ? "24 hours" : "Permanent",
-          until:
-            cmd === "/block24"
-              ? now() + 24 * 60 * 60 * 1000
-              : now() + 100 * 365 * 24 * 60 * 60 * 1000
+          duration: cmd==="/block24"?"24 hours":"Permanent",
+          until: cmd==="/block24"?now()+24*60*60*1000:now()+100*365*24*60*60*1000
         };
-        writeJSON(BLOCKS_FILE, blocks);
+        write(BLOCKS_FILE, blocks);
 
-        await tg("sendMessage", {
-          chat_id: target,
-          text:
-`⛔ Access Denied
-
-Reason: ${reason}
-
-⏳ Block Duration: ${blocks[target].duration}`
-        });
-
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text: `🚫 User ${target} blocked`
-        });
+        await tg("sendMessage", { chat_id: target, text: `⛔ Blocked\nReason: ${reason}` });
+        await tg("sendMessage", { chat_id: OWNER_ID, text: `🚫 User ${target} blocked` });
         return;
       }
 
-      /* /blocklist */
+      /* BLOCKLIST */
       if (cmd === "/blocklist") {
-        const blocks = readJSON(BLOCKS_FILE, {});
+        const blocks = read(BLOCKS_FILE, {});
         let text = "🚫 Active Blocks\n\n";
-        if (!Object.keys(blocks).length) text += "No active blocks.";
-        else {
-          for (const id in blocks) {
-            const hrs = Math.ceil((blocks[id].until - now()) / (1000*60*60));
-            text += `• ${id} (${hrs}h left)\n`;
-          }
+        for (const id in blocks) {
+          const hrs = Math.ceil((blocks[id].until-now())/(1000*60*60));
+          text += `• ${id} (${hrs}h left)\n`;
         }
         await tg("sendMessage", { chat_id: OWNER_ID, text });
         return;
       }
 
-      /* /unblock */
+      /* UNBLOCK */
       if (cmd === "/unblock") {
-        const blocks = readJSON(BLOCKS_FILE, {});
+        const blocks = read(BLOCKS_FILE, {});
         delete blocks[target];
-        writeJSON(BLOCKS_FILE, blocks);
+        write(BLOCKS_FILE, blocks);
+        await tg("sendMessage", { chat_id: target, text: "✅ You are unblocked." });
+        await tg("sendMessage", { chat_id: OWNER_ID, text: `✅ User ${target} unblocked` });
+        return;
+      }
 
-        await tg("sendMessage", {
-          chat_id: target,
-          text: "✅ You have been unblocked."
-        });
+      /* REPLY TO USER */
+      if (cmd === "/reply") {
+        const id = parts[1];
+        const reply = parts.slice(2).join(" ");
+        await tg("sendMessage", { chat_id: id, text: `📩 Support Reply\n\n${reply}` });
+        return;
+      }
 
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text: `✅ User ${target} unblocked`
-        });
+      /* MASTER REPLY */
+      if (cmd === "/masterreply") {
+        const text = parts.slice(1).join(" ");
+        const users = read(USERS_FILE, []);
+        let sent = 0;
+        for (const u of users) {
+          if (u.user_id === OWNER_ID) continue;
+          if (blocks[u.user_id]) continue;
+          await tg("sendMessage", {
+            chat_id: u.user_id,
+            text: `📢 Support Announcement\n\n${text}`
+          });
+          sent++;
+        }
+        await tg("sendMessage", { chat_id: OWNER_ID, text: `✅ Sent to ${sent} users.` });
         return;
       }
     }
 
-    /* ================= FORWARD USER MESSAGE ================= */
-    const blueId = `<a href="tg://user?id=${userId}">${userId}</a>`;
+    /* FORWARD USER MESSAGE */
     await tg("sendMessage", {
       chat_id: OWNER_ID,
-      parse_mode: "HTML",
       text:
 `📩 New Support Message
 
-👤 User: @${username}
-🆔 User ID: ${blueId}
+User: @${username}
+ID: ${userId}
 
-💬 Message:
+Message:
 ${msg.text || "Non-text message"}`
     });
 
     await tg("sendMessage", {
       chat_id: chatId,
-      text:
-`✅ Message Received Successfully
-
-Thank you for contacting Amrendra Support 🙏
-Your message has been forwarded.
-Please wait for a response.`
+      text: "✅ Message received. Please wait for reply."
     });
 
   } catch (e) {
-    console.error("BOT ERROR:", e);
+    console.error(e);
   }
 });
 
 /* ================= START ================= */
-app.listen(PORT, () => {
-  console.log("✅ Amrendra Support Bot LIVE");
-});
+app.listen(PORT, () => console.log("✅ Support Bot LIVE"));

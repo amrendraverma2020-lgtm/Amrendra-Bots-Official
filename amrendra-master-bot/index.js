@@ -1,7 +1,7 @@
 /**
  * ============================================================
  * AMRENDRA MASTER CONTROL BOT
- * PROFESSIONAL • STABLE • BROADCAST PANEL
+ * FINAL • STABLE • PROFESSIONAL BROADCAST PANEL
  * ============================================================
  */
 
@@ -31,17 +31,17 @@ const BATCH_DELAY_MS = Number(process.env.BATCH_DELAY_MS || 3000);
 const BOT_TOKENS = (process.env.BOT_TOKENS || "")
   .split(",")
   .map(p => {
-    const parts = p.split(":");
-    if (parts.length < 2) return null;
+    const i = p.indexOf(":");
+    if (i === -1) return null;
     return {
-      name: parts[0].trim(),
-      token: parts.slice(1).join(":").trim()
+      name: p.slice(0, i).trim(),
+      token: p.slice(i + 1).trim()
     };
   })
   .filter(Boolean);
 
 if (!MASTER_TOKEN || !OWNER_ID) {
-  throw new Error("MASTER_BOT_TOKEN or OWNER_ID missing");
+  throw new Error("❌ MASTER_BOT_TOKEN or OWNER_ID missing");
 }
 
 /* ============================================================
@@ -54,16 +54,14 @@ if (!fs.existsSync(DB_FILE)) {
   fs.mkdirSync(path.dirname(DB_FILE), { recursive: true });
   fs.writeFileSync(
     DB_FILE,
-    JSON.stringify({ users: {}, stats: {}, queue: [] }, null, 2)
+    JSON.stringify({ users: {}, stats: {} }, null, 2)
   );
 }
 
 let DB = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
-
 DB.users = DB.users || {};
 DB.stats = DB.stats || {};
 DB.stats.broadcasts_sent = DB.stats.broadcasts_sent || 0;
-DB.queue = DB.queue || [];
 
 function saveDB() {
   fs.writeFileSync(DB_FILE, JSON.stringify(DB, null, 2));
@@ -104,11 +102,10 @@ function ownerOnly(update) {
 
 let pendingText = null;
 let pendingBots = new Set();
-let emergencyStop = false;
-let lastDeliveryReport = null;
+let lastReport = null;
 
 /* ============================================================
-   USER FILTER
+   USER FILTER PER BOT
    ============================================================ */
 
 function getUsersForBot(botName) {
@@ -116,7 +113,8 @@ function getUsersForBot(botName) {
     u.verified &&
     !u.blocked &&
     (u.warnings || 0) < 3 &&
-    u.bots?.includes(botName)
+    Array.isArray(u.bots) &&
+    u.bots.includes(botName)
   );
 }
 
@@ -136,45 +134,55 @@ function botKeyboard() {
   const rows = [];
 
   BOT_TOKENS.forEach((bot, i) => {
-    rows.push([{
-      text: `${pendingBots.has(i) ? "✅" : "☑️"} ${bot.name} Bot`,
-      callback_data: `toggle:${i}`
-    }]);
+    rows.push([
+      {
+        text: `${pendingBots.has(i) ? "✅" : "☑️"} ${bot.name} Bot`,
+        callback_data: `toggle:${i}`
+      }
+    ]);
   });
 
-  rows.push([{ text: "🚀 SEND BROADCAST", callback_data: "send" }]);
-  rows.push([{ text: "❌ CANCEL", callback_data: "cancel" }]);
+  // 🔥 SELECT ALL BUTTON
+  rows.push([
+    { text: "✅ SELECT ALL BOTS", callback_data: "select_all" }
+  ]);
+
+  rows.push([
+    { text: "🚀 SEND BROADCAST", callback_data: "send" }
+  ]);
+
+  rows.push([
+    { text: "❌ CANCEL", callback_data: "cancel" }
+  ]);
 
   return { inline_keyboard: rows };
 }
 
 /* ============================================================
-   BROADCAST ENGINE (PER BOT)
+   BROADCAST ENGINE (PER BOT – FIXED)
    ============================================================ */
 
-async function sendBroadcast(text, selectedIndexes) {
+async function sendBroadcast(text, botIndexes) {
   const report = {};
   let total = 0;
 
-  for (const index of selectedIndexes) {
-    const bot = BOT_TOKENS[index];
+  for (const i of botIndexes) {
+    const bot = BOT_TOKENS[i];
     const users = getUsersForBot(bot.name);
 
     report[bot.name] = users.length;
     total += users.length;
 
-    for (let i = 0; i < users.length; i += BATCH_SIZE) {
-      if (emergencyStop) break;
-
-      const batch = users.slice(i, i + BATCH_SIZE);
+    for (let x = 0; x < users.length; x += BATCH_SIZE) {
+      const batch = users.slice(x, x + BATCH_SIZE);
 
       await Promise.all(
         batch.map(u =>
-          tg("sendMessage", {
-            chat_id: u.id,
-            text,
-            parse_mode: "Markdown"
-          }, bot.token).catch(() => {})
+          tg(
+            "sendMessage",
+            { chat_id: u.id, text, parse_mode: "Markdown" },
+            bot.token
+          ).catch(() => {})
         )
       );
 
@@ -185,7 +193,7 @@ async function sendBroadcast(text, selectedIndexes) {
   DB.stats.broadcasts_sent++;
   saveDB();
 
-  lastDeliveryReport = {
+  lastReport = {
     id: DB.stats.broadcasts_sent,
     perBot: report,
     total
@@ -206,13 +214,44 @@ function getSystemStatus() {
     `👥 Total Users Registered: ${users.length}\n` +
     `✅ Verified Users: ${users.filter(u => u.verified).length}\n` +
     `🚫 Blocked Users: ${users.filter(u => u.blocked).length}\n` +
-    `⚠️ Users with Warnings: ${users.filter(u => (u.warnings||0)>0).length}\n\n` +
+    `⚠️ Users with Warnings: ${users.filter(u => (u.warnings || 0) > 0).length}\n\n` +
     `🤖 Active Bots Connected: ${BOT_TOKENS.length}\n` +
     `📨 Total Broadcasts Delivered: ${DB.stats.broadcasts_sent}\n\n` +
     "🟢 System Health: STABLE\n" +
     "🔒 Central database synced"
   );
 }
+
+/* ============================================================
+   API — REGISTER USER FROM VERIFICATION BOT
+   ============================================================ */
+
+app.post("/register-user", (req, res) => {
+  try {
+    const { id, username, name, bots } = req.body || {};
+    if (!id) return res.status(400).json({ ok: false });
+
+    const old = DB.users[id] || {};
+
+    DB.users[id] = {
+      id,
+      username: username || old.username || "",
+      name: name || old.name || "",
+      verified: true,
+      bots: Array.from(new Set([...(old.bots || []), ...(bots || [])])),
+      blocked: old.blocked || false,
+      warnings: old.warnings || 0,
+      verified_at: old.verified_at || Date.now()
+    };
+
+    saveDB();
+    console.log("✅ USER REGISTERED:", id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("REGISTER USER ERROR:", e);
+    res.status(500).json({ ok: false });
+  }
+});
 
 /* ============================================================
    WEBHOOK
@@ -238,12 +277,7 @@ app.post("/", async (req, res) => {
         text:
           "👋 *AMRENDRA MASTER CONTROL*\n\n" +
           "Welcome to your Central Command System 🚀\n\n" +
-          "From here, you can:\n" +
-          "• ✉️ Send messages to users\n" +
-          "• 🤖 Choose which bots receive the message\n" +
-          "• 📊 Check live system status\n" +
-          "• 🛑 Use emergency controls\n\n" +
-          "👉 To begin, just SEND the message you want to broadcast.",
+          "👉 To begin, SEND the message you want to broadcast.",
         reply_markup: mainMenu()
       });
       return;
@@ -262,8 +296,7 @@ app.post("/", async (req, res) => {
           "📝 Message Content:\n" +
           pendingText +
           "\n━━━━━━━━━━━━━━━━━━━━━━\n\n" +
-          "🤖 Select the target bots below\n" +
-          "_This message will be delivered only to verified users_",
+          "🤖 Select target bots:",
         reply_markup: botKeyboard()
       });
       return;
@@ -277,6 +310,16 @@ app.post("/", async (req, res) => {
           chat_id: OWNER_ID,
           parse_mode: "Markdown",
           text: getSystemStatus()
+        });
+        return;
+      }
+
+      if (a === "select_all") {
+        pendingBots = new Set(BOT_TOKENS.map((_, i) => i));
+        await tg("editMessageReplyMarkup", {
+          chat_id: OWNER_ID,
+          message_id: update.callback_query.message.message_id,
+          reply_markup: botKeyboard()
         });
         return;
       }
@@ -302,10 +345,7 @@ app.post("/", async (req, res) => {
           return;
         }
 
-        const total = await sendBroadcast(
-          pendingText,
-          [...pendingBots]
-        );
+        await sendBroadcast(pendingText, [...pendingBots]);
 
         pendingText = null;
         pendingBots.clear();
@@ -313,9 +353,7 @@ app.post("/", async (req, res) => {
         await tg("sendMessage", {
           chat_id: OWNER_ID,
           parse_mode: "Markdown",
-          text:
-            "✅ *Broadcast Sent Successfully*\n\n" +
-            "📦 Delivery details are ready.",
+          text: "✅ *Broadcast Sent Successfully*",
           reply_markup: {
             inline_keyboard: [
               [{ text: "📦 View Delivery Report", callback_data: "report" }]
@@ -325,22 +363,18 @@ app.post("/", async (req, res) => {
         return;
       }
 
-      if (a === "report" && lastDeliveryReport) {
-        let text =
-          `📦 *Delivery Report — Broadcast #${lastDeliveryReport.id}*\n\n`;
-
-        for (const [bot, count] of Object.entries(lastDeliveryReport.perBot)) {
-          text += `🤖 ${bot} Bot: ${count} users\n`;
+      if (a === "report" && lastReport) {
+        let t = `📦 *Delivery Report — #${lastReport.id}*\n\n`;
+        for (const [bot, c] of Object.entries(lastReport.perBot)) {
+          t += `🤖 ${bot} Bot: ${c} users\n`;
         }
-
-        text += `\n👥 Total Delivered: ${lastDeliveryReport.total}`;
+        t += `\n👥 Total Delivered: ${lastReport.total}`;
 
         await tg("sendMessage", {
           chat_id: OWNER_ID,
           parse_mode: "Markdown",
-          text
+          text: t
         });
-        return;
       }
 
       if (a === "cancel") {

@@ -1,7 +1,7 @@
 /**
  * ============================================================
  * AMRENDRA MASTER CONTROL BOT
- * FINAL • STABLE • BUTTON-SAFE • PRODUCTION READY
+ * FINAL • STABLE • BUTTON-SAFE • RENDER READY
  * ============================================================
  */
 
@@ -14,7 +14,7 @@ const app = express();
 app.use(express.json());
 
 /* ============================================================
-   ENVIRONMENT
+   ENVIRONMENT VARIABLES
    ============================================================ */
 
 const MASTER_TOKEN = process.env.MASTER_BOT_TOKEN;
@@ -25,7 +25,7 @@ const BATCH_SIZE = Number(process.env.BATCH_SIZE || 20);
 const BATCH_DELAY_MS = Number(process.env.BATCH_DELAY_MS || 3000);
 
 /**
- * BOT_TOKENS format:
+ * BOT_TOKENS format (Render ENV):
  * BOT_TOKENS=Exam:xxxx,Study:yyyy,Song:zzzz
  */
 const BOT_TOKENS = (process.env.BOT_TOKENS || "")
@@ -60,7 +60,7 @@ if (!fs.existsSync(DB_FILE)) {
 
 let DB = JSON.parse(fs.readFileSync(DB_FILE, "utf8"));
 
-// 🔥 SAFETY INIT (VERY IMPORTANT)
+// 🔒 SAFETY INIT
 DB.users = DB.users || {};
 DB.queue = DB.queue || [];
 DB.stats = DB.stats || {};
@@ -71,7 +71,7 @@ function saveDB() {
 }
 
 /* ============================================================
-   TELEGRAM HELPER
+   TELEGRAM API HELPER
    ============================================================ */
 
 async function tg(method, body, token = MASTER_TOKEN) {
@@ -89,7 +89,7 @@ async function tg(method, body, token = MASTER_TOKEN) {
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 /* ============================================================
-   SECURITY
+   SECURITY (OWNER ONLY)
    ============================================================ */
 
 function ownerOnly(update) {
@@ -160,7 +160,7 @@ function botKeyboard() {
 }
 
 /* ============================================================
-   BROADCAST ENGINE
+   BROADCAST ENGINE (FAIL SAFE)
    ============================================================ */
 
 async function sendNow(text, users) {
@@ -213,7 +213,11 @@ async function broadcast(text, botIndexes) {
    ============================================================ */
 
 function getSystemStatus() {
+  DB.stats = DB.stats || {};
+  DB.stats.broadcasts_sent = DB.stats.broadcasts_sent || 0;
+
   const users = Object.values(DB.users);
+
   return (
     "📊 *LIVE SYSTEM STATUS*\n\n" +
     `👥 Total Users: ${users.length}\n` +
@@ -226,25 +230,53 @@ function getSystemStatus() {
 }
 
 /* ============================================================
+   API: REGISTER USER FROM VERIFICATION BOT
+   ============================================================ */
+
+app.post("/register-user", (req, res) => {
+  try {
+    const { id, username, name, bots } = req.body || {};
+    if (!id) return res.status(400).json({ ok: false });
+
+    const old = DB.users[id] || {};
+
+    DB.users[id] = {
+      id,
+      username: username || old.username || "",
+      name: name || old.name || "",
+      verified: true,
+      bots: Array.from(new Set([...(old.bots || []), ...(bots || [])])),
+      blocked: old.blocked || false,
+      warnings: old.warnings || 0,
+      verified_at: old.verified_at || Date.now()
+    };
+
+    saveDB();
+    console.log("✅ USER REGISTERED:", id);
+    res.json({ ok: true });
+  } catch (e) {
+    console.error("REGISTER USER ERROR:", e);
+    res.status(500).json({ ok: false });
+  }
+});
+
+/* ============================================================
    WEBHOOK (BUTTON SAFE)
    ============================================================ */
 
 app.post("/", async (req, res) => {
-  // 🔥 ALWAYS RESPOND FIRST
-  res.send("ok");
+  res.send("ok"); // 🔥 MUST
 
   try {
     const update = req.body;
     if (!ownerOnly(update)) return;
 
-    // 🔑 ACK CALLBACK
     if (update.callback_query) {
       await tg("answerCallbackQuery", {
         callback_query_id: update.callback_query.id
       });
     }
 
-    // /START
     if (update.message?.text === "/start") {
       await tg("sendMessage", {
         chat_id: OWNER_ID,
@@ -252,17 +284,15 @@ app.post("/", async (req, res) => {
         text:
           "👋 *AMRENDRA MASTER CONTROL*\n\n" +
           "Central command system is **ONLINE**.\n\n" +
-          "You can:\n" +
-          "• Send broadcasts\n" +
-          "• Select bots\n" +
-          "• Monitor system status\n\n" +
+          "• Bot-wise broadcast\n" +
+          "• Live system monitoring\n" +
+          "• Emergency controls\n\n" +
           "_All systems operational._",
         reply_markup: mainMenu()
       });
       return;
     }
 
-    // NEW MESSAGE
     if (update.message?.text && !update.message.text.startsWith("/")) {
       pendingText = update.message.text;
       pendingBots.clear();
@@ -273,13 +303,12 @@ app.post("/", async (req, res) => {
         text:
           "📨 *Broadcast Preview*\n\n" +
           pendingText +
-          "\n\nSelect target bots below:",
+          "\n\nSelect target bots:",
         reply_markup: botKeyboard()
       });
       return;
     }
 
-    // CALLBACK ACTIONS
     if (update.callback_query) {
       const a = update.callback_query.data;
 
@@ -301,7 +330,6 @@ app.post("/", async (req, res) => {
         pendingBots.has(i) ? pendingBots.delete(i) : pendingBots.add(i);
       }
 
-      // 🔄 UPDATE BUTTON UI
       await tg("editMessageReplyMarkup", {
         chat_id: OWNER_ID,
         message_id: update.callback_query.message.message_id,

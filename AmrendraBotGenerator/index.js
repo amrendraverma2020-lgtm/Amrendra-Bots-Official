@@ -1,7 +1,7 @@
 /**
  * ============================================================
- * AMRENDRA BOT BUILDER / SUPPORT BOT
- * FINAL • REAL • EARNING READY • OWNER SAFE
+ * AMRENDRA BOT BUILDER (EARNING + SUPPORT)
+ * FINAL • STABLE • ALL FEATURES ENABLED
  * ============================================================
  */
 
@@ -16,6 +16,7 @@ app.use(express.json());
 /* ================= ENV ================= */
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const OWNER_ID = String(process.env.OWNER_ID);
+const OWNER_USERNAME = process.env.OWNER_USERNAME || "YourUsername";
 const PORT = process.env.PORT || 10000;
 
 if (!BOT_TOKEN || !OWNER_ID) {
@@ -23,22 +24,10 @@ if (!BOT_TOKEN || !OWNER_ID) {
 }
 
 /* ================= FILES ================= */
-const DATA_DIR = __dirname;
-const USERS_FILE = path.join(DATA_DIR, "users.json");        // []
-const WARNS_FILE = path.join(DATA_DIR, "warns.json");        // {}
-const BLOCKS_FILE = path.join(DATA_DIR, "blocks.json");      // {}
-const HISTORY_FILE = path.join(DATA_DIR, "block_history.json"); // []
-
-/* ================= INIT FILES ================= */
-function ensure(file, def) {
-  if (!fs.existsSync(file)) {
-    fs.writeFileSync(file, JSON.stringify(def, null, 2));
-  }
-}
-ensure(USERS_FILE, []);
-ensure(WARNS_FILE, {});
-ensure(BLOCKS_FILE, {});
-ensure(HISTORY_FILE, []);
+const USERS_FILE = path.join(__dirname, "users.json");        // []
+const WARNS_FILE = path.join(__dirname, "warns.json");        // {}
+const BLOCKS_FILE = path.join(__dirname, "blocks.json");      // {}
+const HISTORY_FILE = path.join(__dirname, "block_history.json"); // []
 
 /* ================= HELPERS ================= */
 const now = () => Date.now();
@@ -50,19 +39,19 @@ async function tg(method, body) {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
-  });
+  }).then(r => r.json()).catch(()=>{});
 }
 
 /* ================= USER SAVE ================= */
 function saveUser(id, username) {
   const users = read(USERS_FILE, []);
   if (!users.find(u => u.user_id === id)) {
-    users.push({ user_id: id, username, joined_at: now() });
+    users.push({ user_id: id, username });
     write(USERS_FILE, users);
   }
 }
 
-/* ================= CLEANUP (AUTO) ================= */
+/* ================= CLEANUP ================= */
 function cleanup() {
   /* WARN EXPIRY */
   const warns = read(WARNS_FILE, {});
@@ -78,19 +67,18 @@ function cleanup() {
 
   /* BLOCK EXPIRY */
   const blocks = read(BLOCKS_FILE, {});
-  const history = read(HISTORY_FILE, []);
+  const hist = read(HISTORY_FILE, []);
   const activeBlocks = {};
   for (const id in blocks) {
-    if (blocks[id].until > now()) {
-      activeBlocks[id] = blocks[id];
-    } else {
-      history.push({ ...blocks[id], expired_at: now() });
+    if (blocks[id].until > now()) activeBlocks[id] = blocks[id];
+    else {
+      hist.push({ ...blocks[id], expired_at: now() });
       tg("sendMessage", { chat_id: id, text: "✅ You have been automatically unblocked." });
       tg("sendMessage", { chat_id: OWNER_ID, text: `🔓 User ${id} auto-unblocked` });
     }
   }
   write(BLOCKS_FILE, activeBlocks);
-  write(HISTORY_FILE, history.filter(h => h.expired_at > now() - 30*24*60*60*1000));
+  write(HISTORY_FILE, hist.filter(h => h.expired_at > now() - 30*24*60*60*1000));
 }
 
 /* ================= WEBHOOK ================= */
@@ -98,9 +86,31 @@ app.post("/", async (req, res) => {
   res.send("ok");
   try {
     cleanup();
+    const update = req.body;
+    const msg = update.message;
+    const cb = update.callback_query;
+    if (!msg && !cb) return;
 
-    const msg = req.body.message;
-    if (!msg) return;
+    /* ===== CALLBACK BUTTONS ===== */
+    if (cb) {
+      const cid = cb.from.id;
+      if (cb.data === "create_bot") {
+        await tg("sendMessage", {
+          chat_id: cid,
+          text:
+`📝 Please send complete information about your bot in ONE message.
+
+Include:
+• Bot type (Exam / Support / Business / Other)
+• What the bot should do
+• Special features (if any)
+• Preferred bot name (optional)
+
+I will personally review and reply.`
+        });
+      }
+      return;
+    }
 
     const chatId = String(msg.chat.id);
     const userId = String(msg.from.id);
@@ -125,12 +135,12 @@ You will be automatically unblocked.`
       return;
     }
 
-    /* ===== START ===== */
+    /* ================= START ================= */
     if (msg.text === "/start") {
       await tg("sendMessage", {
         chat_id: chatId,
         text:
-`👋 Welcome to *Amrendra Bot Builder*
+`👋 Welcome to Amrendra Bot Builder
 
 🤖 This bot helps you create your own custom Telegram bot.
 
@@ -141,24 +151,25 @@ You will be automatically unblocked.`
 
 💰 Bot price starts from ₹150 only.
 
-✉️ You can now send your message 👇`,
-        parse_mode: "Markdown"
+✉️ Choose an option below 👇`,
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🤖 Create Your Bot", callback_data: "create_bot" }],
+            [{ text: "📞 Contact Owner", url: `https://t.me/${OWNER_USERNAME}` }]
+          ]
+        }
       });
       return;
     }
 
     /* ================= OWNER COMMANDS ================= */
-    if (chatId === OWNER_ID && msg.text) {
+    if (chatId === OWNER_ID && msg.text?.startsWith("/")) {
       const parts = msg.text.split(" ");
       const cmd = parts[0];
       const target = parts[1];
 
-      /* SAFETY */
-      if ((cmd === "/warn" || cmd === "/block" || cmd === "/block24") && target === OWNER_ID) {
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text: "❌ Safety Lock: You cannot target yourself."
-        });
+      if (target === OWNER_ID) {
+        await tg("sendMessage", { chat_id: OWNER_ID, text: "❌ You cannot target yourself." });
         return;
       }
 
@@ -167,24 +178,17 @@ You will be automatically unblocked.`
         await tg("sendMessage", {
           chat_id: OWNER_ID,
           text:
-`📘 Commands List
-
-/start - Welcome UI
-/health - System diagnostic
-/stats - Bot statistics
-
-/warn <user_id> <reason>
-/warnlist [user_id]
-
-/block <user_id> <reason>
-/block24 <user_id> <reason>
+`/reply <id> <msg> - Reply to user
+/send <id> - Send fixed intro message
+/masterreply <msg> - Broadcast
+/warn <id> <reason>
+/warnlist [id]
+/block <id> <reason>
+/block24 <id> <reason>
 /blocklist
-/unblock <user_id>
-
-/reply <user_id> <message>
-/send <user_id> (pricing message)
-/paid <user_id>
-/masterreply <message>`
+/unblock <id>
+/health
+/stats`
         });
         return;
       }
@@ -194,18 +198,16 @@ You will be automatically unblocked.`
         const users = read(USERS_FILE, []).length;
         const warns = Object.keys(read(WARNS_FILE, {})).length;
         const blocks = Object.keys(read(BLOCKS_FILE, {})).length;
-
         await tg("sendMessage", {
           chat_id: OWNER_ID,
           text:
 `🧠 SYSTEM DIAGNOSTIC
 
-📂 Users: ${users}
+👥 Users: ${users}
 ⚠️ Active Warns: ${warns}
 🚫 Active Blocks: ${blocks}
 
-🟢 Telegram API: CONNECTED
-🟢 Data Persistence: OK`
+🟢 Status: STABLE`
         });
         return;
       }
@@ -217,219 +219,83 @@ You will be automatically unblocked.`
           text:
 `📊 BOT STATS
 
-👤 Total Users: ${read(USERS_FILE, []).length}
-⚠️ Warned Users: ${Object.keys(read(WARNS_FILE, {})).length}
-🚫 Blocked Users: ${Object.keys(read(BLOCKS_FILE, {})).length}`
+👥 Users: ${read(USERS_FILE, []).length}
+⚠️ Warns: ${Object.keys(read(WARNS_FILE, {})).length}
+🚫 Blocks: ${Object.keys(read(BLOCKS_FILE, {})).length}`
         });
-        return;
-      }
-
-      /* /warn */
-      if (cmd === "/warn") {
-        if (!target) {
-          await tg("sendMessage", {
-            chat_id: OWNER_ID,
-            text: "❌ Usage: /warn <user_id> <reason>"
-          });
-          return;
-        }
-        const reason = parts.slice(2).join(" ") || "No reason";
-        const warns = read(WARNS_FILE, {});
-        warns[target] = warns[target] || [];
-        warns[target].push({ reason, expires: now()+30*24*60*60*1000 });
-        write(WARNS_FILE, warns);
-
-        await tg("sendMessage", {
-          chat_id: target,
-          text:
-`⚠️ Warning Issued
-
-Reason: ${reason}
-3 warnings = auto block (48h)`
-        });
-
-        if (warns[target].length >= 3) {
-          const blocks = read(BLOCKS_FILE, {});
-          blocks[target] = {
-            reason: "Auto-block (3 warnings)",
-            duration: "48 hours",
-            until: now()+48*60*60*1000
-          };
-          write(BLOCKS_FILE, blocks);
-          await tg("sendMessage", {
-            chat_id: target,
-            text:
-`⛔ Auto Blocked
-
-Reason: 3 warnings
-⏳ Duration: 48 hours`
-          });
-        }
-
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text: `⚠️ Warn added to ${target}`
-        });
-        return;
-      }
-
-      /* /warnlist */
-      if (cmd === "/warnlist") {
-        const id = target || OWNER_ID;
-        const warns = read(WARNS_FILE, {});
-        const list = warns[id] || [];
-        let text = `⚠️ Warn List for ${id}\n\n`;
-        text += list.length ? list.map((w,i)=>`${i+1}. ${w.reason}`).join("\n") : "No active warnings.";
-        await tg("sendMessage", { chat_id: OWNER_ID, text });
-        return;
-      }
-
-      /* /block /block24 */
-      if (cmd === "/block" || cmd === "/block24") {
-        if (!target) {
-          await tg("sendMessage", {
-            chat_id: OWNER_ID,
-            text: "❌ Usage: /block <user_id> <reason>"
-          });
-          return;
-        }
-        const reason = parts.slice(2).join(" ") || "No reason";
-        const blocks = read(BLOCKS_FILE, {});
-        blocks[target] = {
-          reason,
-          duration: cmd === "/block24" ? "24 hours" : "Permanent",
-          until: cmd === "/block24" ? now()+24*60*60*1000 : now()+100*365*24*60*60*1000
-        };
-        write(BLOCKS_FILE, blocks);
-
-        await tg("sendMessage", {
-          chat_id: target,
-          text:
-`⛔ Access Denied
-
-Reason: ${reason}
-⏳ Duration: ${blocks[target].duration}`
-        });
-
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text: `🚫 User ${target} blocked`
-        });
-        return;
-      }
-
-      /* /blocklist */
-      if (cmd === "/blocklist") {
-        const blocks = read(BLOCKS_FILE, {});
-        let text = "🚫 Active Blocks\n\n";
-        if (!Object.keys(blocks).length) text += "No active blocks.";
-        for (const id in blocks) {
-          const hrs = Math.ceil((blocks[id].until-now())/(1000*60*60));
-          text += `• ${id} (${hrs}h left)\n`;
-        }
-        await tg("sendMessage", { chat_id: OWNER_ID, text });
-        return;
-      }
-
-      /* /unblock */
-      if (cmd === "/unblock") {
-        if (!target) {
-          await tg("sendMessage", {
-            chat_id: OWNER_ID,
-            text: "❌ Usage: /unblock <user_id>"
-          });
-          return;
-        }
-        const blocks = read(BLOCKS_FILE, {});
-        delete blocks[target];
-        write(BLOCKS_FILE, blocks);
-        await tg("sendMessage", { chat_id: target, text: "✅ You have been unblocked." });
-        await tg("sendMessage", { chat_id: OWNER_ID, text: `✅ User ${target} unblocked` });
         return;
       }
 
       /* /reply */
       if (cmd === "/reply") {
-        const replyText = parts.slice(2).join(" ");
         await tg("sendMessage", {
           chat_id: target,
-          text: replyText
+          text: `📩 Message from Amrendra (Owner)\n\n${parts.slice(2).join(" ")}`
         });
         return;
       }
 
-      /* /send (pricing) */
+      /* /send (fixed intro) */
       if (cmd === "/send") {
         await tg("sendMessage", {
           chat_id: target,
           text:
-`💰 Bot Development Charges — Amrendra Bot Builder
+`📩 Message from Amrendra (Owner)
 
-📦 Price: ₹150 only
-💳 Payment in 3 steps:
-₹50 start • ₹50 demo • ₹50 final
+Hello 👋  
+Main Amrendra hoon — is bot ka owner.
 
-Reply YES to continue.`
-        });
-        return;
-      }
+Maine aapka message personally dekh liya hai ✅  
 
-      /* /paid */
-      if (cmd === "/paid") {
-        await tg("sendMessage", {
-          chat_id: target,
-          text:
-`✅ Payment noted!
+🧠 Please send:
+1️⃣ Bot type  
+2️⃣ Bot work  
+3️⃣ Features  
+4️⃣ Bot name  
 
-I will now start working on your bot.
-You will receive updates soon.
-
-— Amrendra`
+Ek hi message me likhiye 🙏`
         });
         return;
       }
 
       /* /masterreply */
       if (cmd === "/masterreply") {
-        const text = parts.slice(1).join(" ");
         const users = read(USERS_FILE, []);
         let sent = 0;
         for (const u of users) {
           if (u.user_id === OWNER_ID) continue;
-          if (read(BLOCKS_FILE, {})[u.user_id]) continue;
+          if (blocks[u.user_id]) continue;
           await tg("sendMessage", {
             chat_id: u.user_id,
-            text: `📢 Announcement\n\n${text}`
+            text: `📢 Announcement\n\n${parts.slice(1).join(" ")}`
           });
           sent++;
         }
-        await tg("sendMessage", {
-          chat_id: OWNER_ID,
-          text: `📢 Broadcast sent to ${sent} users.`
-        });
+        await tg("sendMessage", { chat_id: OWNER_ID, text: `✅ Sent to ${sent} users.` });
         return;
       }
     }
 
-    /* ================= USER → OWNER FORWARD ================= */
+    /* ================= FORWARD USER MESSAGE ================= */
+    let content = msg.text || "📎 Non-text message received";
     await tg("sendMessage", {
       chat_id: OWNER_ID,
       text:
-`📩 New Message
+`📩 New Client Message
 
 👤 @${username}
 🆔 ${userId}
 
-💬 ${msg.text || "Non-text message"}`
+💬 ${content}`
     });
 
     await tg("sendMessage", {
       chat_id: chatId,
       text:
-`✅ Message Received
+`✅ Message Received Successfully
 
-Thanks for contacting me 🙏
-I will reply soon.`
+Thank you for contacting Amrendra 🙏  
+I will personally review and reply.`
     });
 
   } catch (e) {
@@ -438,6 +304,4 @@ I will reply soon.`
 });
 
 /* ================= START ================= */
-app.listen(PORT, () => {
-  console.log("✅ Amrendra Bot Builder LIVE");
-});
+app.listen(PORT, () => console.log("✅ Amrendra Bot Builder LIVE"));

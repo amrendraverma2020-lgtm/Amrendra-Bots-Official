@@ -226,15 +226,34 @@ You will be automatically unblocked.`
         return;
       }
 
-      /* /reply */
       if (cmd === "/reply") {
-        await tg("sendMessage", {
-          chat_id: target,
-          text: `📩 Message from Amrendra (Owner)\n\n${parts.slice(2).join(" ")}`
-        });
-        return;
-      }
+  await tg("sendMessage", {
+    chat_id: target,
+    text: `📩 Message from Amrendra (Owner)\n\n${parts.slice(2).join(" ")}`
+  });
+  return;
+}/* /reply */
+if (cmd === "/reply") {
+  if (!target || parts.length < 3) {
+    await tg("sendMessage", {
+      chat_id: OWNER_ID,
+      text: "❌ Usage: /reply <user_id> <message>"
+    });
+    return;
+  }
 
+  await tg("sendMessage", {
+    chat_id: target,
+    text: `📩 Message from Amrendra (Owner)\n\n${parts.slice(2).join(" ")}`
+  });
+
+  await tg("sendMessage", {
+    chat_id: OWNER_ID,
+    text: `✅ Reply sent successfully to user ${target}`
+  });
+
+  return;
+}
       /* /send (fixed intro) */
       if (cmd === "/send") {
         await tg("sendMessage", {

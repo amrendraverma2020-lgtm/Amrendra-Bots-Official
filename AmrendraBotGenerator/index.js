@@ -226,13 +226,7 @@ You will be automatically unblocked.`
         return;
       }
 
-      if (cmd === "/reply") {
-  await tg("sendMessage", {
-    chat_id: target,
-    text: `📩 Message from Amrendra (Owner)\n\n${parts.slice(2).join(" ")}`
-  });
-  return;
-}/* /reply */
+  /* /reply */
 if (cmd === "/reply") {
   if (!target || parts.length < 3) {
     await tg("sendMessage", {

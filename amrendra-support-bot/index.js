@@ -312,16 +312,37 @@ Owner Commands:
         return;
       }
 
-      /* REPLY */
       if (cmd === "/reply") {
-        const replyText = parts.slice(2).join(" ");
-        await tg("sendMessage", {
-          chat_id: target,
-          text: `📩 Support Reply\n\n${replyText}`
-        });
-        return;
-      }
+  const replyText = parts.slice(2).join(" ");
+  await tg("sendMessage", {
+    chat_id: target,
+    text: `📩 Support Reply\n\n${replyText}`
+  });
+  return;
+}/* REPLY */
+if (cmd === "/reply") {
+  if (!target || parts.length < 3) {
+    await tg("sendMessage", {
+      chat_id: OWNER_ID,
+      text: "❌ Usage: /reply <user_id> <message>"
+    });
+    return;
+  }
 
+  const replyText = parts.slice(2).join(" ");
+
+  await tg("sendMessage", {
+    chat_id: target,
+    text: `📩 Support Reply\n\n${replyText}`
+  });
+
+  await tg("sendMessage", {
+    chat_id: OWNER_ID,
+    text: `✅ Reply successfully sent to user ${target}`
+  });
+
+  return;
+}
       /* MASTER REPLY */
       if (cmd === "/masterreply") {
         const text = parts.slice(1).join(" ");

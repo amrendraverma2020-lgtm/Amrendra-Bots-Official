@@ -1,54 +1,46 @@
 /**
- * ============================================================
- * NEET ASPIRANTS BOT (BIOLOGY FOUNDATION)
- * REAL • STABLE • MONGODB POWERED
- * ============================================================
+ * ==========================================
+ * NEET ASPIRANTS BOT — BASE WORKING ENGINE
+ * VERIFIED FOR:
+ * - Render
+ * - Telegram Webhook
+ * - Node 18/22
+ * ==========================================
  */
 
 require("dotenv").config();
-
 const express = require("express");
 const fetch = require("node-fetch");
-const { MongoClient } = require("mongodb");
 
 const app = express();
 app.use(express.json());
 
-/* ================= ENV ================= */
+/* ============ ENV ============ */
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const MONGO_URI = process.env.MONGO_URI;
 const PORT = process.env.PORT || 10000;
 
-if (!BOT_TOKEN || !MONGO_URI) {
-  throw new Error("BOT_TOKEN or MONGO_URI missing");
+if (!BOT_TOKEN) {
+  console.error("❌ BOT_TOKEN missing");
+  process.exit(1);
 }
 
-/* ================= TELEGRAM ================= */
+/* ============ TELEGRAM HELPER ============ */
 async function tg(method, body) {
   return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body)
-  }).then(r => r.json()).catch(() => {});
+  }).then(r => r.json());
 }
 
-/* ================= MONGODB ================= */
-const client = new MongoClient(MONGO_URI);
-let usersCollection;
+/* ============ HEALTH CHECK ============ */
+app.get("/", (req, res) => {
+  res.send("NEET Bot is running ✅");
+});
 
-async function connectDB() {
-  await client.connect();
-  const db = client.db("neet_bot");
-  usersCollection = db.collection("users");
-  console.log("✅ MongoDB connected");
-}
-connectDB();
-
-/* ================= HELPERS ================= */
-const now = () => new Date();
-
-/* ================= WEBHOOK ================= */
+/* ============ WEBHOOK ============ */
 app.post("/", async (req, res) => {
+  // VERY IMPORTANT — reply immediately
   res.send("ok");
 
   try {
@@ -57,59 +49,39 @@ app.post("/", async (req, res) => {
 
     const msg = update.message;
     const chatId = msg.chat.id;
-    const userId = String(msg.from.id);
-    const username = msg.from.username || "N/A";
+    const text = msg.text || "";
 
-    /* ================= SAVE / UPDATE USER ================= */
-    await usersCollection.updateOne(
-      { user_id: userId },
-      {
-        $set: {
-          username,
-          last_active: now()
-        },
-        $setOnInsert: {
-          joined_at: now()
-        }
-      },
-      { upsert: true }
-    );
-
-    /* ================= /START ================= */
-    if (msg.text === "/start") {
+    /* ===== START ===== */
+    if (text === "/start") {
       await tg("sendMessage", {
         chat_id: chatId,
         text:
-`👋 Welcome to NEET Aspirants Bot 🧬
+`👋 Welcome to NEET Aspirants Bot
 
-🔥 This bot will help you with:
-• Daily NEET-level Biology tests
-• Timed practice (exam feel)
-• Score & leaderboard system
+📚 This bot will help you with:
+• Daily NEET-level practice
+• Timed tests
+• Leaderboards (coming soon)
 
-📌 How it works:
-• Join & stay active
-• Daily test will be shared automatically
-• Compete with other NEET aspirants
+⚠️ Note:
+Bot may take 30–60 seconds to respond
+if the server was sleeping.
 
-⏳ Note:
-Bot may take 30–60 seconds to start if server was sleeping.
-
-🚀 Stay consistent. Stay sharp.`
+✉️ You can now send a message 👇`
       });
       return;
     }
 
-    /* ================= NORMAL MESSAGE ================= */
+    /* ===== NORMAL MESSAGE ===== */
     await tg("sendMessage", {
       chat_id: chatId,
       text:
 `✅ Message received!
 
-Daily Biology Test system is being prepared 🔥  
-Please stay active to receive daily tests.
+Daily Biology Test system
+is coming very soon 🚀
 
-📚 Consistency = Selection 💪`
+Stay tuned.`
     });
 
   } catch (err) {
@@ -117,7 +89,7 @@ Please stay active to receive daily tests.
   }
 });
 
-/* ================= SERVER ================= */
+/* ============ START SERVER ============ */
 app.listen(PORT, () => {
-  console.log(`🚀 NEET Bot running on port ${PORT}`);
+  console.log("✅ NEET Bot running on port", PORT);
 });

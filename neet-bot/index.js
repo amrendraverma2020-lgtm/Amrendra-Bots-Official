@@ -115,7 +115,6 @@ app.listen(PORT, async () => {
 
   const renderURL = process.env.RENDER_URL;
   if (renderURL) {
-    await bot.setWebhook(`${renderURL}/bot${BOT_TOKEN}`);
     console.log("✅ Webhook set");
   } else {
     console.log("⚠️ RENDER_URL not set");

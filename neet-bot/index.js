@@ -11,7 +11,7 @@ const BOT_TOKEN = process.env.BOT_TOKEN;
 const OWNER_ID = Number(process.env.OWNER_ID);
 const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME;
 const WEBHOOK_URL = process.env.WEBHOOK_URL;
-const SUPPORT_BOT_URL = "https://t.me/YOUR_SUPPORT_BOT"; // change if needed
+const SUPPORT_BOT_URL = "https://t.me/amrendra_support_bot"; // change if needed
 
 const bot = new TelegramBot(BOT_TOKEN);
 const app = express();

@@ -1,95 +1,123 @@
-/**
- * ==========================================
- * NEET ASPIRANTS BOT — BASE WORKING ENGINE
- * VERIFIED FOR:
- * - Render
- * - Telegram Webhook
- * - Node 18/22
- * ==========================================
- */
-
+// =======================
+//  BASIC SETUP
+// =======================
 require("dotenv").config();
+
 const express = require("express");
-const fetch = require("node-fetch");
+const bodyParser = require("body-parser");
+const TelegramBot = require("node-telegram-bot-api");
+const mongoose = require("mongoose");
 
+// =======================
+//  EXPRESS APP
+// =======================
 const app = express();
-app.use(express.json());
+app.use(bodyParser.json());
 
-/* ============ ENV ============ */
+// =======================
+//  TELEGRAM BOT
+// =======================
 const BOT_TOKEN = process.env.BOT_TOKEN;
-const PORT = process.env.PORT || 10000;
-
 if (!BOT_TOKEN) {
-  console.error("❌ BOT_TOKEN missing");
+  console.error("❌ BOT_TOKEN missing in ENV");
   process.exit(1);
 }
 
-/* ============ TELEGRAM HELPER ============ */
-async function tg(method, body) {
-  return fetch(`https://api.telegram.org/bot${BOT_TOKEN}/${method}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  }).then(r => r.json());
-}
+const bot = new TelegramBot(BOT_TOKEN);
 
-/* ============ HEALTH CHECK ============ */
-app.get("/", (req, res) => {
-  res.send("NEET Bot is running ✅");
+// =======================
+//  MONGODB CONNECTION
+// =======================
+const MONGO_URI = process.env.MONGO_URI;
+
+mongoose
+  .connect(MONGO_URI, {
+    dbName: "neet_bot"
+  })
+  .then(() => {
+    console.log("✅ MongoDB Connected");
+  })
+  .catch((err) => {
+    console.error("❌ MongoDB Error:", err.message);
+  });
+
+// =======================
+//  USER SCHEMA
+// =======================
+const userSchema = new mongoose.Schema({
+  user_id: { type: Number, unique: true },
+  username: String,
+  first_name: String,
+  joinedAt: { type: Date, default: Date.now }
 });
 
-/* ============ WEBHOOK ============ */
-app.post("/", async (req, res) => {
-  // VERY IMPORTANT — reply immediately
-  res.send("ok");
+const User = mongoose.model("User", userSchema);
+
+// =======================
+//  WEBHOOK ROUTE
+// =======================
+app.post(`/bot${BOT_TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+// =======================
+//  ROOT ROUTE (TEST)
+// =======================
+app.get("/", (req, res) => {
+  res.send("🚀 NEET Aspirants Bot is running");
+});
+
+// =======================
+//  BOT COMMANDS
+// =======================
+
+// /start command
+bot.onText(/\/start/, async (msg) => {
+  const chatId = msg.chat.id;
 
   try {
-    const update = req.body;
-    if (!update.message) return;
+    await User.updateOne(
+      { user_id: msg.from.id },
+      {
+        user_id: msg.from.id,
+        username: msg.from.username,
+        first_name: msg.from.first_name
+      },
+      { upsert: true }
+    );
 
-    const msg = update.message;
-    const chatId = msg.chat.id;
-    const text = msg.text || "";
-
-    /* ===== START ===== */
-    if (text === "/start") {
-      await tg("sendMessage", {
-        chat_id: chatId,
-        text:
-`👋 Welcome to NEET Aspirants Bot
-
-📚 This bot will help you with:
-• Daily NEET-level practice
-• Timed tests
-• Leaderboards (coming soon)
-
-⚠️ Note:
-Bot may take 30–60 seconds to respond
-if the server was sleeping.
-
-✉️ You can now send a message 👇`
-      });
-      return;
-    }
-
-    /* ===== NORMAL MESSAGE ===== */
-    await tg("sendMessage", {
-      chat_id: chatId,
-      text:
-`✅ Message received!
-
-Daily Biology Test system
-is coming very soon 🚀
-
-Stay tuned.`
-    });
-
+    bot.sendMessage(
+      chatId,
+      "👋 Welcome to *NEET Aspirants Bot*\n\n✅ Bot is working properly.\n📘 Daily tests coming soon!",
+      { parse_mode: "Markdown" }
+    );
   } catch (err) {
-    console.error("BOT ERROR:", err);
+    console.error("User save error:", err.message);
+    bot.sendMessage(chatId, "❌ Something went wrong. Try again.");
   }
 });
 
-/* ============ START SERVER ============ */
-app.listen(PORT, () => {
-  console.log("✅ NEET Bot running on port", PORT);
+// simple alive reply (IMPORTANT)
+bot.on("message", (msg) => {
+  if (!msg.text.startsWith("/")) {
+    bot.sendMessage(msg.chat.id, "✅ Bot alive");
+  }
+});
+
+// =======================
+//  SERVER START
+// =======================
+const PORT = process.env.PORT || 3000;
+
+app.listen(PORT, async () => {
+  console.log(`🚀 Server running on port ${PORT}`);
+
+  const renderURL = process.env.RENDER_URL;
+  if (renderURL) {
+    await bot.setWebhook(`${renderURL}/bot${BOT_TOKEN}`);
+    console.log("✅ Webhook set");
+  } else {
+    console.log("⚠️ RENDER_URL not set");
+  }
 });

@@ -1,21 +1,16 @@
 {
-  "name": "neet-bot",
+  "name": "neet-biology-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "NEET Biology Test & Practice Bot",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "node index.js"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
   "dependencies": {
-    "dotenv": "^17.2.3",
-    "express": "^5.2.1",
-    "mongodb": "^7.0.0",
-    "mongoose": "^9.1.1",
-    "node-fetch": "^3.3.2",
-    "node-telegram-bot-api": "^0.67.0"
+    "express": "^4.19.2",
+    "mongoose": "^8.4.0",
+    "node-telegram-bot-api": "^0.66.0",
+    "node-cron": "^3.0.3",
+    "dotenv": "^16.4.5"
   }
 }

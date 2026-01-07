@@ -68,7 +68,6 @@ app.listen(10000, async () => {
 /* ================= HELPERS ================= */
 
 const todayDate = () => new Date().toISOString().split("T")[0];
-const shuffle = arr => arr.sort(() => Math.random() - 0.5);
 const isOwner = id => id === OWNER_ID;
 
 async function isJoined(userId) {
@@ -101,34 +100,48 @@ bot.onText(/\/start/, async msg => {
     });
   }
 
-  const text = `
+  const welcomeText = `
 👋 *Welcome to NEET Aspirants Bot*
 
+🎯 Ye bot specially *NEET Biology* ke serious aspirants ke liye hai  
+jahan aap daily tests aur practice ke through  
+apni preparation ko strong bana sakte ho.
+
+━━━━━━━━━━━━━━━
 🧬 *Daily Biology Test*
-• 25 MCQs | 30 Minutes
-• Rank + Leaderboard
+• 25 MCQs
+• ⏱️ 30 Minutes
+• 🏆 Rank + Daily Leaderboard
+• Sirf *1 attempt per day*
 
+━━━━━━━━━━━━━━━
 🔁 *Practice Test*
-• 25 MCQs | 30 Minutes
-• Learning focused
+• 25 MCQs
+• ⏱️ 30 Minutes
+• 📚 Learning focused
+• ❌ No rank, ❌ no pressure
 
+━━━━━━━━━━━━━━━
 📊 *My Progress*
+• Tests + practice ka complete analysis
+
 ☎️ *Contact to Owner*
+• Feature request ya help ke liye
 `;
 
-  await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
+  await bot.sendMessage(chatId, welcomeText, { parse_mode: "Markdown" });
   await showLeaderboard(chatId, todayDate());
 
-  await bot.sendMessage(chatId, "🚀 Get started — choose an option below", {
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "🧬 Today’s Biology Test", callback_data: "daily_test" }],
-        [{ text: "🔁 Practice Test", callback_data: "practice_test" }],
-        [{ text: "📊 My Progress", callback_data: "progress" }],
-        [{ text: "☎️ Contact to Owner", url: SUPPORT_BOT_URL }]
-      ]
+  await bot.sendMessage(chatId,
+    "━━━━━━━━━━━━━━━\n🔥 Ready to test your preparation?\n👇 Tap below to get started",
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🚀 Start Now", callback_data: "start_menu" }]
+        ]
+      }
     }
-  });
+  );
 });
 
 /* ================= FORCE JOIN ================= */
@@ -191,6 +204,14 @@ async function showLeaderboard(chatId, date) {
   await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
 }
 
+/* ================= TIMER HELP ================= */
+
+function remainingMinutes(t) {
+  const total = 30 * 60;
+  const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
+  return Math.max(Math.ceil((total - elapsed) / 60), 0);
+}
+
 /* ================= TEST ENGINE ================= */
 
 async function startTest(chatId, userId, type) {
@@ -217,34 +238,44 @@ async function startTest(chatId, userId, type) {
   activeTests[userId] = {
     type,
     date,
-    questions: shuffle(qs).slice(0,25),
+    questions: qs.slice(0,25),
     index: 0,
     score: 0,
-    startTime: null,
-    answers: []
+    startTime: null
   };
 
-  await bot.sendMessage(chatId,
-`🧬 *Biology Test Instructions*
+  const instructionText = type === "daily"
+    ? `🧬 *Daily Biology Test*
 
 📝 Total Questions: 25
 ⏱️ Time Limit: 30 Minutes
-📌 Test Type: ${type === "daily" ? "Daily Test" : "Practice Test"}
 
-⚠️ Once started, test cannot be paused.
+⚠️ Sirf 1 attempt allowed
+🏆 Rank + Leaderboard count hoga
 
-👇 Ready? Start below`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "▶️ Start Test", callback_data: "start_now" }],
-          [{ text: "❌ Cancel", callback_data: "cancel_test" }]
-        ]
-      }
+👇 Ready? Start below`
+    : `🔁 *Biology Practice Session*
+
+📝 Total Questions: 25
+⏱️ Time Limit: 30 Minutes
+
+📚 Learning focused
+❌ No rank, ❌ no pressure
+
+👇 Ready? Start practice`;
+
+  await bot.sendMessage(chatId, instructionText, {
+    parse_mode: "Markdown",
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: type === "daily" ? "▶️ Start Test" : "▶️ Start Practice", callback_data: "start_now" }],
+        [{ text: "❌ Cancel", callback_data: "cancel_test" }]
+      ]
     }
-  );
+  });
 }
+
+/* ================= QUESTION UI ================= */
 
 function sendQuestion(chatId, userId) {
   const t = activeTests[userId];
@@ -252,39 +283,109 @@ function sendQuestion(chatId, userId) {
 
   const text =
 `🧬 *Question ${t.index + 1} / 25*
+⏱️ *Time Left: ${remainingMinutes(t)} min*
 
 ${q.q}
 
-A️⃣ ${q.options[0]}
-B️⃣ ${q.options[1]}
-C️⃣ ${q.options[2]}
-D️⃣ ${q.options[3]}
+🅐 ${q.options[0]}
+🅑 ${q.options[1]}
+🅒 ${q.options[2]}
+🅓 ${q.options[3]}
 
-📌 Choose the correct option 👇`;
+👇 Choose the correct option`;
 
   bot.sendMessage(chatId, text, {
     parse_mode: "Markdown",
     reply_markup: {
       inline_keyboard: [
-        [{ text: "A️⃣", callback_data: "ans_0" }],
-        [{ text: "B️⃣", callback_data: "ans_1" }],
-        [{ text: "C️⃣", callback_data: "ans_2" }],
-        [{ text: "D️⃣", callback_data: "ans_3" }]
+        [{ text: `🅐 ${q.options[0]}`, callback_data: "ans_0" }],
+        [{ text: `🅑 ${q.options[1]}`, callback_data: "ans_1" }],
+        [{ text: `🅒 ${q.options[2]}`, callback_data: "ans_2" }],
+        [{ text: `🅓 ${q.options[3]}`, callback_data: "ans_3" }]
       ]
     }
   });
 }
 
+/* ================= CALLBACK HANDLER ================= */
+
+bot.on("callback_query", async q => {
+  const chatId = q.message.chat.id;
+  const userId = q.from.id;
+
+  if (q.data === "start_menu") {
+    return bot.sendMessage(chatId,
+      "Choose what you want to do 👇",
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🧬 Today’s Biology Test", callback_data: "daily_test" }],
+            [{ text: "🔁 Practice Test", callback_data: "practice_test" }],
+            [{ text: "📊 My Progress", callback_data: "progress" }],
+            [{ text: "☎️ Contact to Owner", url: SUPPORT_BOT_URL }]
+          ]
+        }
+      }
+    );
+  }
+
+  if (q.data === "daily_test") return startTest(chatId, userId, "daily");
+  if (q.data === "practice_test") return startTest(chatId, userId, "practice");
+
+  if (q.data === "start_now") {
+    const t = activeTests[userId];
+    t.startTime = Date.now();
+    sendQuestion(chatId, userId);
+
+    setTimeout(() => {
+      if (activeTests[userId]) finishTest(chatId, userId);
+    }, 30 * 60 * 1000);
+  }
+
+  if (q.data.startsWith("ans_")) {
+    const t = activeTests[userId];
+    const sel = Number(q.data.split("_")[1]);
+    const cq = t.questions[t.index];
+    const correct = sel === cq.correct;
+
+    if (correct) t.score++;
+
+    await bot.sendMessage(chatId,
+      correct
+        ? `✅ *Correct!*\n\n✔️ ${cq.reason}`
+        : `❌ *Wrong!*\n\n✅ Correct Answer: *${["🅐","🅑","🅒","🅓"][cq.correct]}*\n✔️ ${cq.reason}`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [[{ text: "➡️ Next Question", callback_data: "next_q" }]]
+        }
+      }
+    );
+  }
+
+  if (q.data === "next_q") {
+    const t = activeTests[userId];
+    t.index++;
+    if (t.index >= 25) return finishTest(chatId, userId);
+    sendQuestion(chatId, userId);
+  }
+});
+
+/* ================= FINISH TEST ================= */
+
 async function finishTest(chatId, userId) {
   const t = activeTests[userId];
   const time = Math.floor((Date.now() - t.startTime) / 1000);
 
+  let rankText = "";
+
   if (t.type === "daily") {
     await Attempt.create({ user_id: userId, date: t.date, score: t.score, timeTaken: time });
-    await User.updateOne(
-      { user_id: userId },
-      { $inc: { totalTests: 1, totalScore: t.score } }
-    );
+    await User.updateOne({ user_id: userId }, { $inc: { totalTests: 1, totalScore: t.score } });
+
+    const all = await Attempt.find({ date: t.date }).sort({ score: -1, timeTaken: 1 });
+    const rank = all.findIndex(a => a.user_id === userId) + 1;
+    rankText = `🏆 Rank: ${rank} / ${all.length}\n`;
   }
 
   delete activeTests[userId];
@@ -292,154 +393,26 @@ async function finishTest(chatId, userId) {
   const min = Math.floor(time / 60);
   const sec = time % 60;
 
-  await bot.sendMessage(chatId,
-`✅ *Test Completed Successfully* 🎉
+  const resultText = t.type === "daily"
+    ? `✅ *Daily Test Completed* 🎉
 
 📝 Total Questions: 25
 ⭐ Score: ${t.score} / 25
 ⏱️ Time Taken: ${min} min ${sec} sec
+${rankText}
+📊 Result leaderboard me count ho gaya
+💪 Apni rank improve karne ke liye daily attempt karein`
+    : `✅ *Practice Session Completed* 👍
 
-💪 Keep practicing daily to improve your rank`,
-    { parse_mode: "Markdown" }
-  );
-}
+📝 Questions Attempted: 25
+✔️ Correct Answers: ${t.score}
+❌ Wrong Answers: ${25 - t.score}
+⏱️ Time Taken: ${min} min ${sec} sec
 
-/* ================= OWNER UPLOAD ================= */
+📚 Learning > Score
+💪 Roz practice se accuracy improve hogi`;
 
-bot.onText(/\/upload_daily/, msg => {
-  if (!isOwner(msg.from.id)) return;
-  uploadSession[msg.from.id] = { type: "daily", step: "date" };
-  bot.sendMessage(msg.chat.id, "Send date:\nDate: YYYY-MM-DD");
-});
-
-bot.onText(/\/upload_practice/, msg => {
-  if (!isOwner(msg.from.id)) return;
-  uploadSession[msg.from.id] = { type: "practice", step: "date" };
-  bot.sendMessage(msg.chat.id, "Send date:\nDate: YYYY-MM-DD");
-});
-
-bot.on("message", async msg => {
-  const userId = msg.from.id;
-  if (!isOwner(userId) || !uploadSession[userId]) return;
-
-  const session = uploadSession[userId];
-  const text = msg.text || "";
-
-  if (session.step === "date") {
-    const m = text.match(/Date:\s*(\d{4}-\d{2}-\d{2})/);
-    if (!m) return bot.sendMessage(msg.chat.id, "❌ Invalid date format");
-    session.date = m[1];
-    session.step = "questions";
-    return bot.sendMessage(msg.chat.id, "✅ Date saved. Now paste questions.");
-  }
-
-  if (session.step === "questions") {
-    const blocks = text.split(/(?=Q\d+\.)/g);
-    let saved = 0;
-
-    for (const b of blocks) {
-      const q = b.match(/Q\d+\.\s*([\s\S]*?)A\)/);
-      const opts = b.match(/[A-D]\)\s*(.+)/g);
-      const ans = b.match(/Ans:\s*([A-D])/i);
-      const reason = b.match(/Reason:\s*([\s\S]+)/i);
-
-      if (!q || !opts || opts.length < 4 || !ans) continue;
-
-      await Question.create({
-        date: session.date,
-        type: session.type,
-        q: q[1].trim(),
-        options: opts.slice(0,4).map(o => o.replace(/[A-D]\)\s*/, "").trim()),
-        correct: ["A","B","C","D"].indexOf(ans[1].toUpperCase()),
-        reason: reason ? reason[1].trim() : ""
-      });
-
-      saved++;
-    }
-
-    delete uploadSession[userId];
-    return bot.sendMessage(msg.chat.id, `✅ Upload successful. Questions saved: ${saved}`);
-  }
-});
-
-/* ================= CALLBACKS ================= */
-
-bot.on("callback_query", async q => {
-  const chatId = q.message.chat.id;
-  const userId = q.from.id;
-
-  if (q.data === "check_join") {
-    if (await isJoined(userId)) {
-      const next = joinPending[userId];
-      delete joinPending[userId];
-      if (next === "daily") return startTest(chatId, userId, "daily");
-      if (next === "practice") return startTest(chatId, userId, "practice");
-      if (next === "progress") return showProgress(chatId, userId);
-    }
-  }
-
-  if (q.data === "daily_test") return startTest(chatId, userId, "daily");
-  if (q.data === "practice_test") return startTest(chatId, userId, "practice");
-  if (q.data === "progress") return showProgress(chatId, userId);
-
-  if (q.data === "start_now") {
-    const t = activeTests[userId];
-    if (!t) return;
-    t.startTime = Date.now();
-    sendQuestion(chatId, userId);
-    setTimeout(() => {
-      if (activeTests[userId]) finishTest(chatId, userId);
-    }, 30 * 60 * 1000);
-  }
-
-  if (q.data === "cancel_test") {
-    delete activeTests[userId];
-    return bot.sendMessage(chatId, "❌ Test cancelled.");
-  }
-
-  if (q.data.startsWith("ans_")) {
-    const t = activeTests[userId];
-    if (!t) return;
-
-    const sel = Number(q.data.split("_")[1]);
-    const cq = t.questions[t.index];
-    const isCorrect = sel === cq.correct;
-    if (isCorrect) t.score++;
-
-    let feedback = isCorrect
-      ? `✅ *Correct!*\n\n✔️ ${cq.reason || "Good job!"}`
-      : `❌ *Wrong!*\n\n✅ Correct Answer: *${["A","B","C","D"][cq.correct]}*\n✔️ ${cq.reason || ""}`;
-
-    await bot.sendMessage(chatId, feedback, {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [[{ text: "➡️ Next Question", callback_data: "next_q" }]]
-      }
-    });
-  }
-
-  if (q.data === "next_q") {
-    const t = activeTests[userId];
-    if (!t) return;
-    t.index++;
-    if (t.index >= t.questions.length) return finishTest(chatId, userId);
-    sendQuestion(chatId, userId);
-  }
-});
-
-/* ================= PROGRESS ================= */
-
-async function showProgress(chatId, userId) {
-  const u = await User.findOne({ user_id: userId });
-  await bot.sendMessage(chatId,
-`📊 *My Progress*
-
-🧬 Tests Attempted: ${u.totalTests}
-⭐ Total Score: ${u.totalScore}
-
-💪 Keep practicing daily`,
-    { parse_mode: "Markdown" }
-  );
+  await bot.sendMessage(chatId, resultText, { parse_mode: "Markdown" });
 }
 
 /* ================= CLEANUP ================= */

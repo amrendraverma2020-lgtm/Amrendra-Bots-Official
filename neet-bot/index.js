@@ -136,14 +136,17 @@ bot.onText(/\/start/, async msg => {
 async function requireJoin(chatId, userId, action) {
   joinPending[userId] = action;
   await bot.sendMessage(chatId,
-    `🔒 *Channel Join Required*
+`🔒 *Channel Join Required*
 
-Pehle channel join karo, phir *I have joined* dabao.`,
+Is bot ke saare features use karne ke liye
+pehle hamara official channel join karo.
+
+👇 Join karke *I have joined* dabao`,
     {
       parse_mode: "Markdown",
       reply_markup: {
         inline_keyboard: [
-          [{ text: "🔔 Join Channel", url: `https://t.me/${CHANNEL_USERNAME.replace("@", "")}` }],
+          [{ text: "🔔 Join Channel", url: `https://t.me/${CHANNEL_USERNAME.replace("@","")}` }],
           [{ text: "✅ I have joined", callback_data: "check_join" }]
         ]
       }
@@ -154,13 +157,38 @@ Pehle channel join karo, phir *I have joined* dabao.`,
 /* ================= LEADERBOARD ================= */
 
 async function showLeaderboard(chatId, date) {
-  const list = await Attempt.find({ date }).sort({ score: -1, timeTaken: 1 }).limit(20);
-  let t = `🏆 *Biology Leaderboard* (${date})\n\n`;
-  if (!list.length) t += "No attempts yet.";
-  else list.forEach((r, i) => {
-    t += `${i + 1}. User ${r.user_id} — ${r.score}/25 (${r.timeTaken}s)\n`;
-  });
-  await bot.sendMessage(chatId, t, { parse_mode: "Markdown" });
+  const list = await Attempt.find({ date })
+    .sort({ score: -1, timeTaken: 1 })
+    .limit(20);
+
+  let text = `🏆 *Daily Biology Leaderboard*\n📅 Date: ${date}\n\n`;
+
+  if (!list.length) {
+    text += "No attempts yet today.\nBe the first one 💪";
+  } else {
+    for (let i = 0; i < list.length; i++) {
+      const r = list[i];
+      const user = await User.findOne({ user_id: r.user_id });
+
+      const name =
+        user?.username ? `@${user.username}` :
+        user?.first_name ? user.first_name :
+        "NEET Aspirant";
+
+      const medal =
+        i === 0 ? "🥇 1st" :
+        i === 1 ? "🥈 2nd" :
+        i === 2 ? "🥉 3rd" :
+        `🔹 ${i+1}th`;
+
+      const min = Math.floor(r.timeTaken / 60);
+      const sec = r.timeTaken % 60;
+
+      text += `${medal} *${name}*\n⭐ Score: ${r.score}/25\n⏱️ Time: ${min}m ${sec}s\n\n`;
+    }
+  }
+
+  await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
 }
 
 /* ================= TEST ENGINE ================= */
@@ -170,49 +198,81 @@ async function startTest(chatId, userId, type) {
 
   const date = todayDate();
 
-  if (type === "daily") {
+  if (type === "daily" && !isOwner(userId)) {
     const done = await Attempt.findOne({ user_id: userId, date });
-    if (done) return bot.sendMessage(chatId, "❌ You already attempted today.");
+    if (done) {
+      return bot.sendMessage(chatId,
+        "❌ You have already attempted today’s test.\nCome back tomorrow 💪"
+      );
+    }
   }
 
   const qs = await Question.find({ date, type });
-  if (qs.length < 1) {
+  if (!qs.length) {
     return bot.sendMessage(chatId,
-      `⏳ Today’s test will be available soon.\n\nMeanwhile, try Practice Test 💪`
+      "⏳ Today’s test will be available soon.\n\nMeanwhile, try Practice Test 💪"
     );
   }
 
   activeTests[userId] = {
     type,
     date,
-    questions: shuffle(qs).slice(0, 25),
+    questions: shuffle(qs).slice(0,25),
     index: 0,
     score: 0,
-    startTime: Date.now(),
+    startTime: null,
     answers: []
   };
 
-  bot.sendMessage(chatId, "🧬 Test Started | 30 Minutes");
-  sendQuestion(chatId, userId);
+  await bot.sendMessage(chatId,
+`🧬 *Biology Test Instructions*
 
-  setTimeout(() => {
-    if (activeTests[userId]) finishTest(chatId, userId);
-  }, 30 * 60 * 1000);
+📝 Total Questions: 25
+⏱️ Time Limit: 30 Minutes
+📌 Test Type: ${type === "daily" ? "Daily Test" : "Practice Test"}
+
+⚠️ Once started, test cannot be paused.
+
+👇 Ready? Start below`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "▶️ Start Test", callback_data: "start_now" }],
+          [{ text: "❌ Cancel", callback_data: "cancel_test" }]
+        ]
+      }
+    }
+  );
 }
 
 function sendQuestion(chatId, userId) {
   const t = activeTests[userId];
   const q = t.questions[t.index];
-  bot.sendMessage(chatId,
-    `Q${t.index + 1}. ${q.q}`,
-    {
-      reply_markup: {
-        inline_keyboard: q.options.map((o, i) => [
-          { text: o, callback_data: `ans_${i}` }
-        ])
-      }
+
+  const text =
+`🧬 *Question ${t.index + 1} / 25*
+
+${q.q}
+
+A️⃣ ${q.options[0]}
+B️⃣ ${q.options[1]}
+C️⃣ ${q.options[2]}
+D️⃣ ${q.options[3]}
+
+📌 Choose the correct option 👇`;
+
+  bot.sendMessage(chatId, text, {
+    parse_mode: "Markdown",
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "A️⃣", callback_data: "ans_0" }],
+        [{ text: "B️⃣", callback_data: "ans_1" }],
+        [{ text: "C️⃣", callback_data: "ans_2" }],
+        [{ text: "D️⃣", callback_data: "ans_3" }]
+      ]
     }
-  );
+  });
 }
 
 async function finishTest(chatId, userId) {
@@ -229,10 +289,22 @@ async function finishTest(chatId, userId) {
 
   delete activeTests[userId];
 
-  await bot.sendMessage(chatId, `✅ Test Completed\nScore: ${t.score}`);
+  const min = Math.floor(time / 60);
+  const sec = time % 60;
+
+  await bot.sendMessage(chatId,
+`✅ *Test Completed Successfully* 🎉
+
+📝 Total Questions: 25
+⭐ Score: ${t.score} / 25
+⏱️ Time Taken: ${min} min ${sec} sec
+
+💪 Keep practicing daily to improve your rank`,
+    { parse_mode: "Markdown" }
+  );
 }
 
-/* ================= OWNER UPLOAD (FINAL PARSER) ================= */
+/* ================= OWNER UPLOAD ================= */
 
 bot.onText(/\/upload_daily/, msg => {
   if (!isOwner(msg.from.id)) return;
@@ -240,9 +312,14 @@ bot.onText(/\/upload_daily/, msg => {
   bot.sendMessage(msg.chat.id, "Send date:\nDate: YYYY-MM-DD");
 });
 
+bot.onText(/\/upload_practice/, msg => {
+  if (!isOwner(msg.from.id)) return;
+  uploadSession[msg.from.id] = { type: "practice", step: "date" };
+  bot.sendMessage(msg.chat.id, "Send date:\nDate: YYYY-MM-DD");
+});
+
 bot.on("message", async msg => {
   const userId = msg.from.id;
-  const chatId = msg.chat.id;
   if (!isOwner(userId) || !uploadSession[userId]) return;
 
   const session = uploadSession[userId];
@@ -250,10 +327,10 @@ bot.on("message", async msg => {
 
   if (session.step === "date") {
     const m = text.match(/Date:\s*(\d{4}-\d{2}-\d{2})/);
-    if (!m) return bot.sendMessage(chatId, "❌ Invalid date format");
+    if (!m) return bot.sendMessage(msg.chat.id, "❌ Invalid date format");
     session.date = m[1];
     session.step = "questions";
-    return bot.sendMessage(chatId, "✅ Date saved. Now paste questions.");
+    return bot.sendMessage(msg.chat.id, "✅ Date saved. Now paste questions.");
   }
 
   if (session.step === "questions") {
@@ -281,11 +358,11 @@ bot.on("message", async msg => {
     }
 
     delete uploadSession[userId];
-    return bot.sendMessage(chatId, `✅ Upload successful. Questions saved: ${saved}`);
+    return bot.sendMessage(msg.chat.id, `✅ Upload successful. Questions saved: ${saved}`);
   }
 });
 
-/* ================= CALLBACK ================= */
+/* ================= CALLBACKS ================= */
 
 bot.on("callback_query", async q => {
   const chatId = q.message.chat.id;
@@ -296,6 +373,7 @@ bot.on("callback_query", async q => {
       const next = joinPending[userId];
       delete joinPending[userId];
       if (next === "daily") return startTest(chatId, userId, "daily");
+      if (next === "practice") return startTest(chatId, userId, "practice");
       if (next === "progress") return showProgress(chatId, userId);
     }
   }
@@ -304,14 +382,48 @@ bot.on("callback_query", async q => {
   if (q.data === "practice_test") return startTest(chatId, userId, "practice");
   if (q.data === "progress") return showProgress(chatId, userId);
 
+  if (q.data === "start_now") {
+    const t = activeTests[userId];
+    if (!t) return;
+    t.startTime = Date.now();
+    sendQuestion(chatId, userId);
+    setTimeout(() => {
+      if (activeTests[userId]) finishTest(chatId, userId);
+    }, 30 * 60 * 1000);
+  }
+
+  if (q.data === "cancel_test") {
+    delete activeTests[userId];
+    return bot.sendMessage(chatId, "❌ Test cancelled.");
+  }
+
   if (q.data.startsWith("ans_")) {
     const t = activeTests[userId];
     if (!t) return;
+
     const sel = Number(q.data.split("_")[1]);
-    if (sel === t.questions[t.index].correct) t.score++;
+    const cq = t.questions[t.index];
+    const isCorrect = sel === cq.correct;
+    if (isCorrect) t.score++;
+
+    let feedback = isCorrect
+      ? `✅ *Correct!*\n\n✔️ ${cq.reason || "Good job!"}`
+      : `❌ *Wrong!*\n\n✅ Correct Answer: *${["A","B","C","D"][cq.correct]}*\n✔️ ${cq.reason || ""}`;
+
+    await bot.sendMessage(chatId, feedback, {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [[{ text: "➡️ Next Question", callback_data: "next_q" }]]
+      }
+    });
+  }
+
+  if (q.data === "next_q") {
+    const t = activeTests[userId];
+    if (!t) return;
     t.index++;
-    if (t.index >= t.questions.length) finishTest(chatId, userId);
-    else sendQuestion(chatId, userId);
+    if (t.index >= t.questions.length) return finishTest(chatId, userId);
+    sendQuestion(chatId, userId);
   }
 });
 
@@ -320,7 +432,13 @@ bot.on("callback_query", async q => {
 async function showProgress(chatId, userId) {
   const u = await User.findOne({ user_id: userId });
   await bot.sendMessage(chatId,
-    `📊 Progress\nTests: ${u.totalTests}\nScore: ${u.totalScore}`
+`📊 *My Progress*
+
+🧬 Tests Attempted: ${u.totalTests}
+⭐ Total Score: ${u.totalScore}
+
+💪 Keep practicing daily`,
+    { parse_mode: "Markdown" }
   );
 }
 

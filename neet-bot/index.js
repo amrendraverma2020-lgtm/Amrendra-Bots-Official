@@ -787,3 +787,172 @@ bot.onText(/\/admin_stats/, async msg => {
   await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
   await notifyOwner("📊 /admin_stats viewed");
 });
+
+
+
+/*************************************************
+ * NEET ASPIRANTS BOT — PART 3
+ * ADMIN VIEW & ANALYTICS (ADD-ONLY)
+ *************************************************/
+
+/* ===============================================
+   /VIEW_TEST YYYY-MM-DD
+================================================ */
+
+bot.onText(/\/view_test (\d{4}-\d{2}-\d{2})/, async (msg, match) => {
+  if (msg.from.id !== OWNER_ID) return;
+
+  const date = match[1];
+  const qs = await Question.find({ date, type: "daily" });
+
+  if (!qs.length) {
+    await bot.sendMessage(msg.chat.id,
+      `❌ No DAILY test found for ${date}`
+    );
+    return notifyOwner(`❌ /view_test failed — no test for ${date}`);
+  }
+
+  let text = `📅 *Daily Biology Test — ${date}*\n📝 Total Questions: ${qs.length}\n\n`;
+
+  qs.forEach((q, i) => {
+    text +=
+`Q${i+1}. ${q.q}
+🅐 ${q.options[0]}
+🅑 ${q.options[1]}
+🅒 ${q.options[2]}
+🅓 ${q.options[3]}
+✅ Ans: ${["🅐","🅑","🅒","🅓"][q.correct]}
+ℹ️ Reason: ${q.reason}
+
+────────────────\n`;
+  });
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+  await notifyOwner(`👁️ Viewed DAILY test for ${date}`);
+});
+
+/* ===============================================
+   /ADMIN_DASHBOARD
+================================================ */
+
+bot.onText(/\/admin_dashboard/, async msg => {
+  if (msg.from.id !== OWNER_ID) return;
+
+  const totalUsers = await User.countDocuments();
+
+  const today = todayDate();
+  const usersToday = await User.countDocuments({
+    joinedAt: {
+      $gte: new Date(today + "T00:00:00"),
+      $lte: new Date(today + "T23:59:59")
+    }
+  });
+
+  const dailyAttempts = await Attempt.countDocuments({ date: today });
+  const practiceAttempts = await User.aggregate([
+    { $match: { practiceTests: { $gt: 0 } } }
+  ]).then(r => r.length);
+
+  const dailyDates = await Question.find({ type: "daily" }).distinct("date");
+  const practiceDates = await Question.find({ type: "practice" }).distinct("date");
+
+  const text =
+`📊 *NEET Bot — Admin Dashboard*
+
+👥 Total Users: ${totalUsers}
+🆕 New Users Today: ${usersToday}
+
+🧪 Daily Test Attempts Today: ${dailyAttempts}
+🔁 Practice Users (lifetime): ${practiceAttempts}
+
+📅 Tests Available:
+• Daily Tests: ${dailyDates.length}
+• Practice Sets: ${practiceDates.length}
+
+⏰ Server Date: ${today}`;
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+  await notifyOwner("📊 /admin_dashboard viewed");
+});
+
+/* ===============================================
+   /TODAY_ACTIVITY
+================================================ */
+
+bot.onText(/\/today_activity/, async msg => {
+  if (msg.from.id !== OWNER_ID) return;
+
+  const today = todayDate();
+
+  const newUsers = await User.countDocuments({
+    joinedAt: {
+      $gte: new Date(today + "T00:00:00"),
+      $lte: new Date(today + "T23:59:59")
+    }
+  });
+
+  const dailyAttempts = await Attempt.countDocuments({ date: today });
+
+  const text =
+`📅 *Today’s Activity — ${today}*
+
+🆕 New Users Joined: ${newUsers}
+🧪 Daily Test Attempts: ${dailyAttempts}
+
+📌 Tip: High attempts = good engagement`;
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+  await notifyOwner("📅 /today_activity checked");
+});
+
+/* ===============================================
+   /USER_STATS
+================================================ */
+
+bot.onText(/\/user_stats/, async msg => {
+  if (msg.from.id !== OWNER_ID) return;
+
+  const totalUsers = await User.countDocuments();
+
+  const weekAgo = new Date();
+  weekAgo.setDate(weekAgo.getDate() - 7);
+
+  const weeklyUsers = await User.countDocuments({
+    joinedAt: { $gte: weekAgo }
+  });
+
+  const text =
+`👥 *User Statistics*
+
+• Total Registered Users: ${totalUsers}
+• Users Joined Last 7 Days: ${weeklyUsers}
+
+📈 Growth looks healthy`;
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+  await notifyOwner("👥 /user_stats viewed");
+});
+
+/* ===============================================
+   /DB_HEALTH
+================================================ */
+
+bot.onText(/\/db_health/, async msg => {
+  if (msg.from.id !== OWNER_ID) return;
+
+  const users = await User.countDocuments();
+  const questions = await Question.countDocuments();
+  const attempts = await Attempt.countDocuments();
+
+  const text =
+`🗄️ *Database Health*
+
+👥 Users: ${users}
+❓ Questions: ${questions}
+📝 Attempts: ${attempts}
+
+✅ DB status: Healthy`;
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+  await notifyOwner("🗄️ /db_health checked");
+});

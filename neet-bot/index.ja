@@ -1,0 +1,1196 @@
+/*************************************************
+ * NEET ASPIRANTS BOT — PART 1 (FINAL)
+ * CORE USER ENGINE (NO ADMIN / UPLOAD)
+ * Stable • Crash-Safe • Button-Only UX
+ *************************************************/
+
+require("dotenv").config();
+
+const TelegramBot = require("node-telegram-bot-api");
+const express = require("express");
+const mongoose = require("mongoose");
+const cron = require("node-cron");
+
+/* ================= CONFIG ================= */
+
+const BOT_TOKEN = process.env.BOT_TOKEN;
+const OWNER_ID = Number(process.env.OWNER_ID);
+const CHANNEL_USERNAME = process.env.CHANNEL_USERNAME; // @channel
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
+const SUPPORT_BOT_URL = process.env.SUPPORT_BOT_URL;
+
+const bot = new TelegramBot(BOT_TOKEN);
+const app = express();
+app.use(express.json());
+
+/* ================= DATABASE ================= */
+
+mongoose.connect(process.env.MONGO_URI)
+  .then(() => console.log("✅ MongoDB connected"))
+  .catch(err => console.error("❌ MongoDB error", err));
+
+/* ================= SCHEMAS ================= */
+
+const User = mongoose.model("User", new mongoose.Schema({
+  user_id: Number,
+  username: String,
+  first_name: String,
+  joinedAt: Date,
+
+  totalTests: { type: Number, default: 0 },
+  totalScore: { type: Number, default: 0 },
+
+  practiceTests: { type: Number, default: 0 },
+  practiceCorrect: { type: Number, default: 0 },
+  practiceWrong: { type: Number, default: 0 }
+}));
+
+const Question = mongoose.model("Question", new mongoose.Schema({
+  date: String,       // YYYY-MM-DD
+  type: String,       // daily | practice
+  q: String,
+  options: [String], // length = 4
+  correct: Number,   // 0..3
+  reason: String
+}));
+
+const Attempt = mongoose.model("Attempt", new mongoose.Schema({
+  user_id: Number,
+  date: String,
+  score: Number,
+  timeTaken: Number  // seconds
+}));
+
+/* ================= WEBHOOK ================= */
+
+app.post(`/bot${BOT_TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
+});
+
+app.listen(10000, async () => {
+  await bot.setWebHook(`${WEBHOOK_URL}/bot${BOT_TOKEN}`);
+  console.log("🚀 Bot running via webhook");
+});
+
+/* ================= HELPERS ================= */
+
+const todayDate = () => new Date().toISOString().split("T")[0];
+
+async function isJoined(userId) {
+  try {
+    const m = await bot.getChatMember(CHANNEL_USERNAME, userId);
+    return ["member", "administrator", "creator"].includes(m.status);
+  } catch {
+    return false;
+  }
+}
+
+/* ================= IN-MEMORY STATE ================= */
+/*
+activeTests[userId] = {
+  type,
+  date,
+  questions,
+  index,
+  score,
+  startTime,
+  answered
+}
+*/
+const activeTests = {};
+const joinPending = {};
+
+/* ================= START ================= */
+
+bot.onText(/\/start/, async msg => {
+  const chatId = msg.chat.id;
+
+  let user = await User.findOne({ user_id: chatId });
+  if (!user) {
+    await User.create({
+      user_id: chatId,
+      username: msg.from.username || "",
+      first_name: msg.from.first_name || "",
+      joinedAt: new Date()
+    });
+  }
+
+  const welcome = `
+👋 *Welcome to NEET Aspirants Bot* 🧬
+
+🎯 This bot is built for *serious NEET Biology aspirants*
+who want daily discipline, real test pressure,
+and smart practice.
+
+━━━━━━━━━━━━━━━
+🧪 *Daily Biology Test*
+• 25 MCQs | 30 Minutes
+• Rank + Leaderboard
+• Real exam feel
+
+━━━━━━━━━━━━━━━
+🔁 *Practice Biology*
+• 25 MCQs | 30 Minutes
+• No rank, no pressure
+• Learning focused
+
+━━━━━━━━━━━━━━━
+📊 *My Progress*
+• Tests + practice analysis
+
+━━━━━━━━━━━━━━━
+☎️ *Contact Owner*
+• Help / suggestions
+
+📌 *Tip:* Daily test + practice = selection edge 💪
+`;
+
+  await bot.sendMessage(chatId, welcome, { parse_mode: "Markdown" });
+  await showLeaderboard(chatId, todayDate());
+
+  await bot.sendMessage(chatId,
+    "🚀 *Get started — choose an option below*",
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🧬 Today’s Biology Test", callback_data: "daily_test" }],
+          [{ text: "🔁 Practice Biology", callback_data: "practice_test" }],
+          [{ text: "📊 My Progress", callback_data: "progress" }],
+          [{ text: "☎️ Contact Owner", url: SUPPORT_BOT_URL }]
+        ]
+      }
+    }
+  );
+});
+
+/* ================= FORCE JOIN ================= */
+
+async function requireJoin(chatId, userId, action) {
+  joinPending[userId] = action;
+
+  await bot.sendMessage(chatId,
+`🔒 *Channel Join Required*
+
+Bot use karne ke liye
+hamara official channel join karna zaroori hai.
+
+👇 Join karke *I have joined* dabayein`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🔔 Join Channel", url: `https://t.me/${CHANNEL_USERNAME.replace("@","")}` }],
+          [{ text: "✅ I have joined", callback_data: "check_join" }]
+        ]
+      }
+    }
+  );
+}
+
+/* ================= LEADERBOARD ================= */
+
+async function showLeaderboard(chatId, date) {
+  const rows = await Attempt.aggregate([
+    { $match: { date } },
+    { $sort: { score: -1, timeTaken: 1 } },
+    {
+      $group: {
+        _id: "$user_id",
+        score: { $first: "$score" },
+        timeTaken: { $first: "$timeTaken" }
+      }
+    },
+    { $sort: { score: -1, timeTaken: 1 } },
+    { $limit: 20 }
+  ]);
+
+  let text = `🏆 *Daily Biology Leaderboard*\n📅 ${date}\n\n`;
+
+  if (!rows.length) {
+    text += "No attempts yet today.\nBe the first 💪";
+  } else {
+    for (let i = 0; i < rows.length; i++) {
+      const r = rows[i];
+      const u = await User.findOne({ user_id: r._id });
+      const name = u?.username ? `@${u.username}` : u?.first_name || "NEET Aspirant";
+
+      const m = Math.floor(r.timeTaken / 60);
+      const s = r.timeTaken % 60;
+      const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i+1}`;
+
+      text += `${medal} *${name}*\n⭐ ${r.score}/25 | ⏱️ ${m}m ${s}s\n\n`;
+    }
+  }
+
+  await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
+}
+
+/* ================= TIMER ================= */
+
+function timeLeft(t) {
+  const total = 30 * 60;
+  const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
+  const left = Math.max(total - elapsed, 0);
+  const m = Math.floor(left / 60);
+  const s = left % 60;
+  return `${m}:${s.toString().padStart(2,"0")}`;
+}
+
+/* ================= TEST ENGINE ================= */
+
+async function startTest(chatId, userId, type) {
+  if (!(await isJoined(userId))) return requireJoin(chatId, userId, type);
+
+  const date = todayDate();
+
+  if (type === "daily") {
+    const done = await Attempt.findOne({ user_id: userId, date });
+    if (done) {
+      return bot.sendMessage(chatId,
+        "❌ You have already attempted today’s test.\nCome back tomorrow 💪"
+      );
+    }
+  }
+
+  let qs;
+
+  if (type === "daily") {
+    qs = await Question.find({ date, type });
+  } else {
+    // practice = random from last 30 days
+    const d = new Date();
+    d.setDate(d.getDate() - 30);
+    const cutoff = d.toISOString().split("T")[0];
+
+    qs = await Question.aggregate([
+      { $match: { type:"practice", date: { $gte: cutoff } } },
+      { $sample: { size: 25 } }
+    ]);
+  }
+
+  if (!qs || qs.length < 25) {
+    return bot.sendMessage(chatId,
+      "⏳ Test not available yet.\nMeanwhile, you can try later 💪"
+    );
+  }
+
+  activeTests[userId] = {
+    type,
+    date,
+    questions: qs,
+    index: 0,
+    score: 0,
+    startTime: null,
+    answered: false
+  };
+
+  await bot.sendMessage(chatId,
+`🧬 *${type === "daily" ? "Daily Biology Test" : "Practice Biology"}*
+
+📝 25 Questions
+⏱️ 30 Minutes
+👇 Ready?`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "▶️ Start Test", callback_data: "start_now" }],
+          [{ text: "❌ Cancel", callback_data: "cancel_test" }]
+        ]
+      }
+    }
+  );
+}
+
+function sendQuestion(chatId, userId) {
+  const t = activeTests[userId];
+  if (!t) return;
+
+  const q = t.questions[t.index];
+  t.answered = false;
+
+  const text = `
+🧬 *Question ${t.index + 1} / 25*
+⏱️ *Time Left:* ${timeLeft(t)}
+
+${q.q}
+
+🅐 ${q.options[0]}
+🅑 ${q.options[1]}
+🅒 ${q.options[2]}
+🅓 ${q.options[3]}
+`;
+
+  bot.sendMessage(chatId, text, {
+    parse_mode: "Markdown",
+    reply_markup: {
+      inline_keyboard: [
+        [{ text:`🅐 ${q.options[0]}`, callback_data:"ans_0" }],
+        [{ text:`🅑 ${q.options[1]}`, callback_data:"ans_1" }],
+        [{ text:`🅒 ${q.options[2]}`, callback_data:"ans_2" }],
+        [{ text:`🅓 ${q.options[3]}`, callback_data:"ans_3" }]
+      ]
+    }
+  });
+}
+
+/* ================= CALLBACKS ================= */
+
+bot.on("callback_query", async q => {
+  const chatId = q.message.chat.id;
+  const userId = q.from.id;
+
+  if (q.data === "check_join") {
+    if (await isJoined(userId)) {
+      const next = joinPending[userId];
+      delete joinPending[userId];
+      if (next === "daily") return startTest(chatId, userId, "daily");
+      if (next === "practice") return startTest(chatId, userId, "practice");
+      if (next === "progress") return showProgress(chatId, userId);
+    }
+    return requireJoin(chatId, userId, joinPending[userId]);
+  }
+
+  if (q.data === "daily_test") return startTest(chatId, userId, "daily");
+  if (q.data === "practice_test") return startTest(chatId, userId, "practice");
+  if (q.data === "progress") return showProgress(chatId, userId);
+
+  if (q.data === "start_now") {
+    const t = activeTests[userId];
+    if (!t) return;
+    t.startTime = Date.now();
+    sendQuestion(chatId, userId);
+
+    setTimeout(() => {
+      if (activeTests[userId]) finishTest(chatId, userId);
+    }, 30 * 60 * 1000);
+  }
+
+  if (q.data.startsWith("ans_")) {
+    const t = activeTests[userId];
+    if (!t || t.answered) return;
+    t.answered = true;
+
+    const sel = Number(q.data.split("_")[1]);
+    const cq = t.questions[t.index];
+
+    const correct = sel === cq.correct;
+    if (correct) t.score++;
+
+    await bot.sendMessage(chatId,
+      correct
+        ? `✅ *Correct!*\n\n✔️ ${cq.reason}`
+        : `❌ *Wrong!*\n\n✅ Correct: *${["🅐","🅑","🅒","🅓"][cq.correct]}*\n✔️ ${cq.reason}`,
+      {
+        parse_mode:"Markdown",
+        reply_markup:{
+          inline_keyboard:[
+            [{ text:"➡️ Next Question", callback_data:"next_q" }]
+          ]
+        }
+      }
+    );
+  }
+
+  if (q.data === "next_q") {
+    const t = activeTests[userId];
+    if (!t) return;
+    t.index++;
+    if (t.index >= t.questions.length) return finishTest(chatId, userId);
+    sendQuestion(chatId, userId);
+  }
+});
+
+/* ================= FINISH TEST ================= */
+
+async function finishTest(chatId, userId) {
+  const t = activeTests[userId];
+  if (!t) return;
+
+  const time = Math.floor((Date.now() - t.startTime) / 1000);
+  const m = Math.floor(time / 60);
+  const s = time % 60;
+
+  if (t.type === "daily") {
+    await Attempt.create({
+      user_id:userId,
+      date:t.date,
+      score:t.score,
+      timeTaken:time
+    });
+
+    await User.updateOne(
+      { user_id:userId },
+      { $inc:{ totalTests:1, totalScore:t.score } }
+    );
+  } else {
+    await User.updateOne(
+      { user_id:userId },
+      {
+        $inc:{
+          practiceTests:1,
+          practiceCorrect:t.score,
+          practiceWrong:25 - t.score
+        }
+      }
+    );
+  }
+
+  delete activeTests[userId];
+
+  const result =
+t.type === "daily"
+? `✅ *Daily Test Completed* 🎉
+
+⭐ Score: ${t.score}/25
+⏱️ Time: ${m}m ${s}s
+
+🏆 Result leaderboard me count ho gaya`
+: `✅ *Practice Completed* 👍
+
+✔️ Correct: ${t.score}
+❌ Wrong: ${25 - t.score}
+⏱️ Time: ${m}m ${s}s`;
+
+  await bot.sendMessage(chatId, result, { parse_mode:"Markdown" });
+}
+
+/* ================= PROGRESS ================= */
+
+async function showProgress(chatId, userId) {
+  if (!(await isJoined(userId))) return requireJoin(chatId, userId, "progress");
+
+  const u = await User.findOne({ user_id:userId });
+
+  const avg = u.totalTests ? (u.totalScore/u.totalTests).toFixed(1) : "0.0";
+  const acc = (u.practiceCorrect + u.practiceWrong)
+    ? ((u.practiceCorrect/(u.practiceCorrect+u.practiceWrong))*100).toFixed(1)
+    : "0";
+
+  await bot.sendMessage(chatId,
+`📊 *My Progress*
+
+🧬 Daily Tests
+• Attempts: ${u.totalTests}
+• Avg Score: ${avg}/25
+
+🔁 Practice
+• Sessions: ${u.practiceTests}
+• Accuracy: ${acc}%
+
+💪 Consistency = Selection`,
+    { parse_mode:"Markdown" }
+  );
+}
+
+/* ================= CRON CLEANUP ================= */
+
+cron.schedule("0 0 * * *", async () => {
+  const d = new Date();
+  d.setDate(d.getDate() - 30);
+  const cutoff = d.toISOString().split("T")[0];
+
+  await Question.deleteMany({ date:{ $lt:cutoff } });
+  await Attempt.deleteMany({ date:{ $lt:cutoff } });
+
+  console.log("🗑️ Old data cleaned");
+});		
+
+/*************************************************
+ * NEET ASPIRANTS BOT — PART 2 (FINAL)
+ * OWNER / ADMIN MODULE
+ * ADD-ONLY (DO NOT MODIFY PART-1)
+ *************************************************/
+
+/* ===============================================
+   OWNER HELPERS
+================================================ */
+
+function ownerOnly(msg) {
+  return msg.from && msg.from.id === OWNER_ID;
+}
+
+function notifyOwner(text) {
+  bot.sendMessage(OWNER_ID, `📢 OWNER LOG\n${text}`).catch(() => {});
+}
+
+function isValidDate(d) {
+  return /^\d{4}-\d{2}-\d{2}$/.test(d);
+}
+
+/* ===============================================
+   UPLOAD STATE
+================================================ */
+
+/*
+uploadSessions[OWNER_ID] = {
+  type: "daily" | "practice",
+  step: "date" | "questions",
+  date: "YYYY-MM-DD",
+  buffer: ""
+}
+*/
+const uploadSessions = {};
+
+/* ===============================================
+   STRONG PARSER (ROBUST)
+================================================ */
+
+function parseQuestions(raw) {
+  // split by Q1, Q2, Q3 ... (delimiter independent)
+  const blocks = raw.split(/(?=Q\d+\.)/g);
+  const questions = [];
+
+  for (const block of blocks) {
+    const qMatch = block.match(/Q\d+\.\s*(.+)/i);
+    const opts = [...block.matchAll(/^[A-D]\)\s*(.+)$/gm)];
+    const ansMatch = block.match(/Ans:\s*([A-D])/i);
+    const reasonMatch = block.match(/Reason:\s*(.+)/i);
+
+    if (!qMatch || opts.length !== 4 || !ansMatch) continue;
+
+    questions.push({
+      q: qMatch[1].trim(),
+      options: opts.map(o => o[1].trim()),
+      correct: ["A","B","C","D"].indexOf(ansMatch[1].toUpperCase()),
+      reason: reasonMatch
+        ? reasonMatch[1].trim()
+        : "Explanation not provided"
+    });
+  }
+
+  return questions;
+}
+
+/* ===============================================
+   START DAILY UPLOAD
+================================================ */
+
+bot.onText(/\/upload_daily/, async msg => {
+  if (!ownerOnly(msg)) return;
+
+  uploadSessions[OWNER_ID] = {
+    type: "daily",
+    step: "date",
+    date: null,
+    buffer: ""
+  };
+
+  await bot.sendMessage(msg.chat.id,
+    "📅 *Send date for DAILY TEST*\nFormat: YYYY-MM-DD",
+    { parse_mode: "Markdown" }
+  );
+
+  notifyOwner("🟡 DAILY upload started — waiting for date");
+});
+
+/* ===============================================
+   START PRACTICE UPLOAD
+================================================ */
+
+bot.onText(/\/upload_practice/, async msg => {
+  if (!ownerOnly(msg)) return;
+
+  uploadSessions[OWNER_ID] = {
+    type: "practice",
+    step: "date",
+    date: null,
+    buffer: ""
+  };
+
+  await bot.sendMessage(msg.chat.id,
+    "📅 *Send date for PRACTICE SET*\nFormat: YYYY-MM-DD",
+    { parse_mode: "Markdown" }
+  );
+
+  notifyOwner("🟡 PRACTICE upload started — waiting for date");
+});
+
+/* ===============================================
+   OWNER MESSAGE HANDLER (UPLOAD FLOW)
+================================================ */
+
+bot.on("message", async msg => {
+  if (!ownerOnly(msg)) return;
+  const session = uploadSessions[OWNER_ID];
+  if (!session) return;
+
+  /* ---- STEP 1: DATE ---- */
+  if (session.step === "date") {
+    const date = msg.text?.trim();
+    if (!isValidDate(date)) {
+      return bot.sendMessage(msg.chat.id,
+        "❌ Invalid date format.\nUse YYYY-MM-DD"
+      );
+    }
+
+    session.date = date;
+    session.step = "questions";
+
+    const existing = await Question.countDocuments({
+      date,
+      type: session.type
+    });
+
+    if (existing > 0) {
+      await bot.sendMessage(msg.chat.id,
+        `⚠️ ${session.type.toUpperCase()} already exists for ${date}\nNew upload will overwrite it.`
+      );
+
+      notifyOwner(
+        `⚠️ Existing ${session.type.toUpperCase()} found for ${date}\nOverwrite confirmed`
+      );
+
+      await Question.deleteMany({
+        date,
+        type: session.type
+      });
+    }
+
+    await bot.sendMessage(msg.chat.id,
+`✅ Date set: ${date}
+
+📝 Now paste *ALL questions* (bulk paste allowed)
+When finished, send /done`
+    );
+
+    notifyOwner(`📅 Upload date set: ${date}`);
+    return;
+  }
+
+  /* ---- STEP 2: COLLECT QUESTIONS ---- */
+  if (session.step === "questions") {
+    if (msg.text && !msg.text.startsWith("/")) {
+      session.buffer += "\n" + msg.text;
+
+      const parsed = parseQuestions(session.buffer);
+
+      if (parsed.length === 0) {
+        return bot.sendMessage(msg.chat.id,
+          "⚠️ No valid questions detected yet. Continue pasting…"
+        );
+      }
+
+      return;
+    }
+  }
+});
+
+/* ===============================================
+   DONE — FINALIZE UPLOAD
+================================================ */
+
+bot.onText(/\/done/, async msg => {
+  if (!ownerOnly(msg)) return;
+  const session = uploadSessions[OWNER_ID];
+
+  if (!session || !session.date) {
+    return bot.sendMessage(msg.chat.id,
+      "❌ No active upload session found."
+    );
+  }
+
+  const parsed = parseQuestions(session.buffer);
+
+  if (parsed.length < 1) {
+    return bot.sendMessage(msg.chat.id,
+      "❌ No valid questions found.\nCheck format and try again."
+    );
+  }
+
+  const docs = parsed.map(q => ({
+    date: session.date,
+    type: session.type,
+    ...q
+  }));
+
+  await Question.insertMany(docs);
+
+  await bot.sendMessage(msg.chat.id,
+    `✅ Upload successful.\nQuestions saved: ${docs.length}`
+  );
+
+  notifyOwner(
+`✅ ${session.type.toUpperCase()} UPLOAD COMPLETED
+📅 Date: ${session.date}
+📝 Questions: ${docs.length}`
+  );
+
+  delete uploadSessions[OWNER_ID];
+});
+
+/* ===============================================
+   LIST / VIEW COMMANDS
+================================================ */
+
+bot.onText(/\/list_tests/, async msg => {
+  if (!ownerOnly(msg)) return;
+
+  const dates = await Question.find({ type:"daily" }).distinct("date");
+  await bot.sendMessage(msg.chat.id,
+    `📋 Daily Tests:\n${dates.join("\n") || "None"}`
+  );
+
+  notifyOwner("📋 /list_tests used");
+});
+
+bot.onText(/\/list_practice/, async msg => {
+  if (!ownerOnly(msg)) return;
+
+  const dates = await Question.find({ type:"practice" }).distinct("date");
+  await bot.sendMessage(msg.chat.id,
+    `📋 Practice Sets:\n${dates.join("\n") || "None"}`
+  );
+
+  notifyOwner("📋 /list_practice used");
+});
+
+bot.onText(/\/view_test (\d{4}-\d{2}-\d{2})/, async (msg, m) => {
+  if (!ownerOnly(msg)) return;
+
+  const qs = await Question.find({
+    date: m[1],
+    type: "daily"
+  });
+
+  if (!qs.length) {
+    return bot.sendMessage(msg.chat.id, "❌ No test found.");
+  }
+
+  let text = `📅 *Daily Test — ${m[1]}*\n\n`;
+
+  qs.forEach((q, i) => {
+    text +=
+`Q${i+1}. ${q.q}
+🅐 ${q.options[0]}
+🅑 ${q.options[1]}
+🅒 ${q.options[2]}
+🅓 ${q.options[3]}
+Ans: ${["A","B","C","D"][q.correct]}
+
+`;
+  });
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode:"Markdown" });
+  notifyOwner(`👁️ Viewed test ${m[1]}`);
+});
+
+/* ===============================================
+   DELETE / FORCE
+================================================ */
+
+bot.onText(/\/delete_test (\d{4}-\d{2}-\d{2})/, async (msg, m) => {
+  if (!ownerOnly(msg)) return;
+
+  await Question.deleteMany({
+    date: m[1],
+    type: "daily"
+  });
+
+  await bot.sendMessage(msg.chat.id,
+    `🗑️ Daily test deleted for ${m[1]}`
+  );
+
+  notifyOwner(`🗑️ Daily test deleted (${m[1]})`);
+});
+
+bot.onText(/\/force_new_day/, async msg => {
+  if (!ownerOnly(msg)) return;
+
+  const users = await User.find({});
+  for (const u of users) {
+    bot.sendMessage(u.user_id,
+      "🧬 New Biology Test is LIVE!\n25 Questions | 30 Minutes\nAll the best 💪"
+    ).catch(()=>{});
+  }
+
+  notifyOwner("⚙️ Manual NEW DAY triggered");
+});
+
+
+/*************************************************
+ * NEET ASPIRANTS BOT — PART 3 (FINAL)
+ * ADMIN ANALYTICS & VISIBILITY MODULE
+ * ADD-ONLY (SAFE)
+ *************************************************/
+
+/* ===============================================
+   OWNER GUARD (REUSE SAFE)
+================================================ */
+
+function ownerOnly(msg) {
+  return msg.from && msg.from.id === OWNER_ID;
+}
+
+function notifyOwner(text) {
+  bot.sendMessage(OWNER_ID, `📊 ADMIN LOG\n${text}`).catch(() => {});
+}
+
+/* ===============================================
+   BASIC STATS HELPERS
+================================================ */
+
+function todayRange() {
+  const start = new Date();
+  start.setHours(0,0,0,0);
+
+  const end = new Date();
+  end.setHours(23,59,59,999);
+
+  return { start, end };
+}
+
+/* ===============================================
+   /admin_stats  (MAIN DASHBOARD)
+================================================ */
+
+bot.onText(/\/admin_stats/, async msg => {
+  if (!ownerOnly(msg)) return;
+
+  const totalUsers = await User.countDocuments({});
+  const totalDailyTests = await Question.countDocuments({ type: "daily" });
+  const totalPracticeQs = await Question.countDocuments({ type: "practice" });
+
+  const totalAttempts = await Attempt.countDocuments({});
+
+  const { start, end } = todayRange();
+
+  const todayAttempts = await Attempt.countDocuments({
+    createdAt: { $gte: start, $lte: end }
+  }).catch(()=>0);
+
+  const text = `
+📊 *ADMIN DASHBOARD*
+
+👥 Total Users: *${totalUsers}*
+🧪 Daily Test Questions: *${totalDailyTests}*
+🔁 Practice Questions: *${totalPracticeQs}*
+📝 Total Test Attempts: *${totalAttempts}*
+📅 Attempts Today: *${todayAttempts}*
+
+🧠 System Status: *OK*
+`;
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+  notifyOwner("Viewed /admin_stats");
+});
+
+/* ===============================================
+   /users_today
+================================================ */
+
+bot.onText(/\/users_today/, async msg => {
+  if (!ownerOnly(msg)) return;
+
+  const { start, end } = todayRange();
+
+  const users = await User.find({
+    joinedAt: { $gte: start, $lte: end }
+  });
+
+  let text = `👥 *Users Joined Today*\n\n`;
+
+  if (!users.length) {
+    text += "No new users today.";
+  } else {
+    users.forEach((u, i) => {
+      const name = u.username ? `@${u.username}` : u.first_name || u.user_id;
+      text += `${i+1}. ${name}\n`;
+    });
+  }
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+  notifyOwner("Viewed users joined today");
+});
+
+/* ===============================================
+   /attempts_today
+================================================ */
+
+bot.onText(/\/attempts_today/, async msg => {
+  if (!ownerOnly(msg)) return;
+
+  const date = new Date().toISOString().split("T")[0];
+
+  const attempts = await Attempt.find({ date });
+
+  let text = `🧪 *Attempts Today (${date})*\n\n`;
+
+  if (!attempts.length) {
+    text += "No attempts yet today.";
+  } else {
+    attempts.forEach((a, i) => {
+      text += `${i+1}. User ${a.user_id} — ${a.score}/25 (${a.timeTaken}s)\n`;
+    });
+  }
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+  notifyOwner("Viewed today's attempts");
+});
+
+/* ===============================================
+   /top_users
+================================================ */
+
+bot.onText(/\/top_users/, async msg => {
+  if (!ownerOnly(msg)) return;
+
+  const users = await User.find({})
+    .sort({ totalScore: -1 })
+    .limit(10);
+
+  let text = `🏆 *Top Users (All Time)*\n\n`;
+
+  if (!users.length) {
+    text += "No data yet.";
+  } else {
+    users.forEach((u, i) => {
+      const name = u.username ? `@${u.username}` : u.first_name || u.user_id;
+      text += `${i+1}. ${name} — ${u.totalScore} pts\n`;
+    });
+  }
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+  notifyOwner("Viewed top users");
+});
+
+/* ===============================================
+   /system_health
+================================================ */
+
+bot.onText(/\/system_health/, async msg => {
+  if (!ownerOnly(msg)) return;
+
+  const mem = process.memoryUsage();
+
+  const text = `
+🛠️ *SYSTEM HEALTH*
+
+🧠 RSS: ${(mem.rss / 1024 / 1024).toFixed(1)} MB
+📦 Heap Used: ${(mem.heapUsed / 1024 / 1024).toFixed(1)} MB
+📦 Heap Total: ${(mem.heapTotal / 1024 / 1024).toFixed(1)} MB
+
+⏱️ Uptime: ${(process.uptime()/60).toFixed(1)} min
+`;
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode: "Markdown" });
+  notifyOwner("Checked system health");
+});
+
+
+/*************************************************
+ * NEET ASPIRANTS BOT — PART 4 (FINAL)
+ * ADVANCED PRACTICE + LEARNING INTELLIGENCE
+ * ADD-ONLY MODULE
+ *************************************************/
+
+/* ===============================================
+   CONFIG (LOCAL)
+================================================ */
+
+const PRACTICE_WINDOW_DAYS = 30;   // last 30 days pool
+const PRACTICE_SET_SIZE = 25;      // per session
+const WEAK_TOPIC_PENALTY = 1.5;    // weight multiplier
+
+/* ===============================================
+   EXTENDED SCHEMA (SAFE ADD)
+================================================ */
+
+// user-topic stats (lightweight intelligence)
+const TopicStat = mongoose.model("TopicStat", new mongoose.Schema({
+  user_id: Number,
+  topic: String,            // inferred keyword
+  correct: { type:Number, default:0 },
+  wrong: { type:Number, default:0 }
+}));
+
+/* ===============================================
+   HELPERS
+================================================ */
+
+function extractTopic(qText) {
+  // ultra-light topic inference (keyword based)
+  const map = [
+    { k:/photosynthesis/i, t:"Photosynthesis" },
+    { k:/cell|organelle|mitochond/i, t:"Cell Biology" },
+    { k:/hormone|insulin|thyroxine/i, t:"Human Physiology" },
+    { k:/blood|platelet|rbc|wbc/i, t:"Blood" },
+    { k:/plant|xylem|phloem/i, t:"Plant Anatomy" }
+  ];
+  for (const m of map) if (m.k.test(qText)) return m.t;
+  return "General Biology";
+}
+
+async function updateTopicStat(userId, qText, isCorrect) {
+  const topic = extractTopic(qText);
+  const inc = isCorrect ? { correct:1 } : { wrong:1 };
+
+  await TopicStat.updateOne(
+    { user_id:userId, topic },
+    { $inc: inc },
+    { upsert:true }
+  );
+}
+
+/* ===============================================
+   SMART PRACTICE QUESTION PICKER
+================================================ */
+
+async function getSmartPracticeQuestions(userId) {
+  // 1) base pool = last N days
+  const d = new Date();
+  d.setDate(d.getDate() - PRACTICE_WINDOW_DAYS);
+  const cutoff = d.toISOString().split("T")[0];
+
+  const pool = await Question.find({
+    type:"practice",
+    date:{ $gte:cutoff }
+  });
+
+  if (pool.length < PRACTICE_SET_SIZE) return null;
+
+  // 2) compute weights (weak topics appear more)
+  const stats = await TopicStat.find({ user_id:userId });
+  const weakness = {};
+  stats.forEach(s=>{
+    const total = s.correct + s.wrong;
+    if (total > 0) {
+      const acc = s.correct / total;
+      if (acc < 0.6) weakness[s.topic] = WEAK_TOPIC_PENALTY;
+    }
+  });
+
+  const weighted = [];
+  pool.forEach(q=>{
+    const t = extractTopic(q.q);
+    const w = weakness[t] || 1;
+    for (let i=0;i<w;i++) weighted.push(q);
+  });
+
+  // 3) random sample
+  const shuffled = weighted.sort(()=>Math.random()-0.5);
+  return shuffled.slice(0, PRACTICE_SET_SIZE);
+}
+
+/* ===============================================
+   OVERRIDE PRACTICE START (SMART)
+================================================ */
+
+// wrap original startTest safely (no overwrite)
+const _startTest = startTest;
+startTest = async function(chatId, userId, type) {
+  if (type !== "practice") {
+    return _startTest(chatId, userId, type);
+  }
+
+  if (!(await isJoined(userId))) return requireJoin(chatId, userId, type);
+
+  const qs = await getSmartPracticeQuestions(userId);
+  if (!qs) {
+    return bot.sendMessage(chatId,
+      "⏳ Practice pool not ready yet.\nPlease try again later 💪"
+    );
+  }
+
+  activeTests[userId] = {
+    type:"practice",
+    date: todayDate(),
+    questions: qs,
+    index:0,
+    score:0,
+    startTime:null,
+    answered:false
+  };
+
+  await bot.sendMessage(chatId,
+`🔁 *Smart Practice Biology*
+
+🧠 Questions auto-selected
+📚 Focus on weak areas
+📝 25 Questions | 30 Minutes
+
+👇 Ready?`,
+    {
+      parse_mode:"Markdown",
+      reply_markup:{
+        inline_keyboard:[
+          [{ text:"▶️ Start Practice", callback_data:"start_now" }],
+          [{ text:"❌ Cancel", callback_data:"cancel_test" }]
+        ]
+      }
+    }
+  );
+};
+
+/* ===============================================
+   ANSWER HOOK (LEARNING UPDATE)
+================================================ */
+
+// hook into answer flow (safe add)
+bot.on("callback_query", async q=>{
+  if (!q.data.startsWith("ans_")) return;
+
+  const userId = q.from.id;
+  const t = activeTests[userId];
+  if (!t) return;
+
+  const sel = Number(q.data.split("_")[1]);
+  const cq = t.questions[t.index];
+  const isCorrect = sel === cq.correct;
+
+  // update learning stats (practice only)
+  if (t.type === "practice") {
+    await updateTopicStat(userId, cq.q, isCorrect);
+  }
+});
+
+/* ===============================================
+   PRACTICE INSIGHT (OWNER + USER)
+================================================ */
+
+bot.onText(/\/practice_insight/, async msg=>{
+  if (!ownerOnly(msg)) return;
+
+  const rows = await TopicStat.find({})
+    .sort({ wrong:-1 })
+    .limit(10);
+
+  let text = `🧠 *Practice Weak Topics (Global)*\n\n`;
+
+  if (!rows.length) {
+    text += "No data yet.";
+  } else {
+    rows.forEach((r,i)=>{
+      text += `${i+1}. ${r.topic} — ❌ ${r.wrong} | ✅ ${r.correct}\n`;
+    });
+  }
+
+  await bot.sendMessage(msg.chat.id, text, { parse_mode:"Markdown" });
+  notifyOwner("Viewed practice insight");
+});
+
+/* ===============================================
+   AUTO CLEANUP (30 DAYS)
+================================================ */
+
+// extend cron safely (no overwrite)
+cron.schedule("15 0 * * *", async ()=>{
+  const d = new Date();
+  d.setDate(d.getDate() - PRACTICE_WINDOW_DAYS);
+  const cutoff = d.toISOString().split("T")[0];
+
+  await Question.deleteMany({
+    type:"practice",
+    date:{ $lt:cutoff }
+  });
+
+  await TopicStat.deleteMany({}); // lightweight reset window
+
+  notifyOwner("🧹 Practice pool auto-cleaned (30 days)");
+});
+
+
+
+

@@ -1,7 +1,7 @@
 /*************************************************
  * NEET ASPIRANTS BOT — PART 1 (FINAL)
  * CORE USER ENGINE
- * Stable • Score-Safe • UX Polished
+ * Stable • Crash-proof • Owner-safe
  *************************************************/
 
 require("dotenv").config();
@@ -36,10 +36,8 @@ const User = mongoose.model("User", new mongoose.Schema({
   username: String,
   first_name: String,
   joinedAt: Date,
-
   totalTests: { type: Number, default: 0 },
   totalScore: { type: Number, default: 0 },
-
   practiceTests: { type: Number, default: 0 },
   practiceCorrect: { type: Number, default: 0 },
   practiceWrong: { type: Number, default: 0 }
@@ -47,7 +45,7 @@ const User = mongoose.model("User", new mongoose.Schema({
 
 const Question = mongoose.model("Question", new mongoose.Schema({
   date: String,
-  type: String, // daily | practice
+  type: String,
   q: String,
   options: [String],
   correct: Number,
@@ -70,7 +68,7 @@ app.post(`/bot${BOT_TOKEN}`, (req, res) => {
 
 app.listen(10000, async () => {
   await bot.setWebHook(`${WEBHOOK_URL}/bot${BOT_TOKEN}`);
-  console.log("🚀 Bot running via webhook");
+  console.log("🚀 Bot running");
 });
 
 /* ================= HELPERS ================= */
@@ -81,18 +79,13 @@ const isOwner = id => id === OWNER_ID;
 async function isJoined(userId) {
   try {
     const m = await bot.getChatMember(CHANNEL_USERNAME, userId);
-    return ["member", "administrator", "creator"].includes(m.status);
+    return ["member","administrator","creator"].includes(m.status);
   } catch {
     return false;
   }
 }
 
 /* ================= STATE ================= */
-
-// activeTests[userId] = {
-//   type, date, questions, index,
-//   score, startTime, answered
-// }
 
 const activeTests = {};
 const joinPending = {};
@@ -112,299 +105,204 @@ bot.onText(/\/start/, async msg => {
     });
   }
 
-  const welcome = `
-👋 *Welcome to NEET Aspirants Bot* 🧬
+  await bot.sendMessage(chatId,
+`👋 *Welcome to NEET Aspirants Bot*
 
-🎯 Serious NEET Biology practice
-🧪 Daily Test + 🔁 Practice
-🏆 Rank + Leaderboard
-📊 Smart Progress Tracking
+🧬 Daily Biology Test  
+🔁 Practice (Unlimited)  
+📊 Progress Tracking  
+🏆 Daily Leaderboard  
 
-👇 Start below
-`;
+⚠️ First start may take *50–60 sec* due to hosting
 
-  await bot.sendMessage(chatId, welcome, { parse_mode: "Markdown" });
+👇 Start below`,
+    { parse_mode:"Markdown" }
+  );
+
   await showLeaderboard(chatId, todayDate());
+
+  await bot.sendMessage(chatId,"Choose 👇",{
+    reply_markup:{
+      inline_keyboard:[
+        [{ text:"🧬 Today’s Biology Test", callback_data:"daily_test" }],
+        [{ text:"🔁 Practice Biology", callback_data:"practice_test" }],
+        [{ text:"📊 My Progress", callback_data:"progress" }],
+        [{ text:"☎️ Contact Owner", url: SUPPORT_BOT_URL }]
+      ]
+    }
+  });
 });
 
 /* ================= FORCE JOIN ================= */
 
-async function requireJoin(chatId, userId, action) {
-  joinPending[userId] = action;
-
+async function requireJoin(chatId,userId,action){
+  joinPending[userId]=action;
   await bot.sendMessage(chatId,
-`🔒 *Join Required*
-
-Please join our official channel first.`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "🔔 Join Channel", url: `https://t.me/${CHANNEL_USERNAME.replace("@","")}` }],
-          [{ text: "✅ I have joined", callback_data: "check_join" }]
-        ]
-      }
-    }
-  );
+`🔒 Join required to continue`,
+{
+  reply_markup:{
+    inline_keyboard:[
+      [{ text:"🔔 Join Channel", url:`https://t.me/${CHANNEL_USERNAME.replace("@","")}`}],
+      [{ text:"✅ I Joined", callback_data:"check_join"}]
+    ]
+  }
+});
 }
 
 /* ================= LEADERBOARD ================= */
 
-async function showLeaderboard(chatId, date) {
+async function showLeaderboard(chatId,date){
   const rows = await Attempt.aggregate([
-    { $match: { date } },
-    { $sort: { score: -1, timeTaken: 1 } },
-    {
-      $group: {
-        _id: "$user_id",
-        score: { $first: "$score" },
-        timeTaken: { $first: "$timeTaken" }
-      }
-    },
-    { $sort: { score: -1, timeTaken: 1 } },
-    { $limit: 10 }
+    { $match:{ date, user_id:{ $ne: OWNER_ID }}},
+    { $sort:{ score:-1, timeTaken:1 }},
+    { $group:{ _id:"$user_id", score:{ $first:"$score"}, timeTaken:{ $first:"$timeTaken"}}},
+    { $sort:{ score:-1, timeTaken:1 }},
+    { $limit:10 }
   ]);
 
   let text = `🏆 *Daily Biology Leaderboard*\n📅 ${date}\n\n`;
 
-  if (!rows.length) {
-    text += "No attempts yet.\nBe the first 💪";
+  if(!rows.length){
+    text += "No attempts yet 💪";
   } else {
-    rows.forEach((r, i) => {
-      const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `#${i+1}`;
-      text += `${medal} User ${r._id}\n⭐ ${r.score}/25 | ⏱️ ${r.timeTaken}s\n\n`;
-    });
+    for(let i=0;i<rows.length;i++){
+      const u = await User.findOne({ user_id: rows[i]._id });
+      const name = u?.username ? `@${u.username}` : u?.first_name || "Aspirant";
+      const m = Math.floor(rows[i].timeTaken/60);
+      const s = rows[i].timeTaken%60;
+      text += `${i+1}. *${name}*\n⭐ ${rows[i].score}/25 | ⏱️ ${m}m ${s}s\n\n`;
+    }
   }
 
-  await bot.sendMessage(chatId, text, {
-    parse_mode: "Markdown",
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "🚀 Start Now", callback_data: "start_menu" }]
-      ]
-    }
-  });
+  await bot.sendMessage(chatId,text,{ parse_mode:"Markdown" });
 }
 
 /* ================= TEST ENGINE ================= */
 
-function remainingTime(t) {
-  const total = 30 * 60;
-  const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
-  const left = Math.max(total - elapsed, 0);
-  return `${Math.floor(left / 60)}m ${left % 60}s`;
+function remainingTime(t){
+  const total=30*60;
+  const elapsed=Math.floor((Date.now()-t.startTime)/1000);
+  const left=Math.max(total-elapsed,0);
+  return `${Math.floor(left/60)}:${String(left%60).padStart(2,"0")}`;
 }
 
-async function startTest(chatId, userId, type) {
-  if (!(await isJoined(userId))) return requireJoin(chatId, userId, type);
+async function startTest(chatId,userId,type){
+  if(!(await isJoined(userId))) return requireJoin(chatId,userId,type);
 
-  const date = todayDate();
+  const date=todayDate();
 
-  if (type === "daily" && !isOwner(userId)) {
-    const done = await Attempt.findOne({ user_id: userId, date });
-    if (done) {
-      return bot.sendMessage(chatId,
-        "❌ You already attempted today’s test.\nCome back tomorrow 💪"
-      );
-    }
+  if(type==="daily" && !isOwner(userId)){
+    const done=await Attempt.findOne({ user_id:userId, date });
+    if(done) return bot.sendMessage(chatId,"❌ Already attempted today");
   }
 
-  const qs = await Question.find({ date, type });
-  if (qs.length < 1) {
-    return bot.sendMessage(chatId,
-      "⏳ Test not available yet.\nTry Practice 💪"
-    );
-  }
+  const qs=await Question.find({ date, type });
+  if(!qs.length) return bot.sendMessage(chatId,"⏳ Test not available");
 
-  activeTests[userId] = {
-    type,
-    date,
-    questions: qs.slice(0, 25),
-    index: 0,
-    score: 0,
-    startTime: null,
-    answered: false
-  };
+  activeTests[userId]={ type,date,questions:qs.slice(0,25),index:0,score:0,startTime:null };
 
   await bot.sendMessage(chatId,
-    `🧬 *${type === "daily" ? "Daily Test" : "Practice Test"}*\n📝 25 Questions | ⏱️ 30 Minutes`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "▶️ Start", callback_data: "start_now" }]
-        ]
-      }
-    }
-  );
+`📝 25 Questions | ⏱️ 30 Minutes`,
+{
+  reply_markup:{ inline_keyboard:[[{ text:"▶️ Start", callback_data:"start_now"}]]}
+});
 }
 
-function sendQuestion(chatId, userId) {
-  const t = activeTests[userId];
-  if (!t) return;
+function sendQuestion(chatId,userId){
+  const t=activeTests[userId];
+  if(!t) return;
+  const q=t.questions[t.index];
 
-  const q = t.questions[t.index];
-  t.answered = false;
+  bot.sendMessage(chatId,
+`🧬 *Q${t.index+1}/25*
+⏱️ ${remainingTime(t)}
 
-  const text =
-`🧬 *Question ${t.index + 1}/25*
-⏱️ *Time Left:* ${remainingTime(t)}
-
-${q.q}
-
-🅐 ${q.options[0]}
-🅑 ${q.options[1]}
-🅒 ${q.options[2]}
-🅓 ${q.options[3]}`;
-
-  bot.sendMessage(chatId, text, {
-    parse_mode: "Markdown",
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "🅐", callback_data: "ans_0" }, { text: "🅑", callback_data: "ans_1" }],
-        [{ text: "🅒", callback_data: "ans_2" }, { text: "🅓", callback_data: "ans_3" }]
-      ]
-    }
-  });
-}
-
-/* ================= CALLBACK HANDLER ================= */
-
-bot.on("callback_query", async q => {
-  const chatId = q.message.chat.id;
-  const userId = q.from.id;
-  const t = activeTests[userId];
-
-  if (q.data === "start_menu") {
-    return bot.sendMessage(chatId, "Choose option 👇", {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "🧬 Daily Test", callback_data: "daily_test" }],
-          [{ text: "🔁 Practice", callback_data: "practice_test" }],
-          [{ text: "📊 Progress", callback_data: "progress" }],
-          [{ text: "☎️ Contact", url: SUPPORT_BOT_URL }]
-        ]
-      }
-    });
-  }
-
-  if (q.data === "daily_test") return startTest(chatId, userId, "daily");
-  if (q.data === "practice_test") return startTest(chatId, userId, "practice");
-
-  if (q.data === "start_now") {
-    if (!t) return;
-    t.startTime = Date.now();
-    sendQuestion(chatId, userId);
-
-    setTimeout(() => {
-      if (activeTests[userId]) finishTest(chatId, userId);
-    }, 30 * 60 * 1000);
-  }
-
-  if (q.data.startsWith("ans_")) {
-    if (!t || t.answered) return; // 🔒 MULTI-CLICK FIX
-    t.answered = true;
-
-    const sel = Number(q.data.split("_")[1]);
-    const cq = t.questions[t.index];
-
-    const correct = sel === cq.correct;
-    if (correct) t.score++;
-
-    await bot.sendMessage(chatId,
-      correct
-        ? `✅ *Correct!*\n${cq.reason}`
-        : `❌ *Wrong!*\n✅ Correct: ${["A","B","C","D"][cq.correct]}\n${cq.reason}`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "➡️ Next", callback_data: "next_q" }]
-          ]
-        }
-      }
-    );
-  }
-
-  if (q.data === "next_q") {
-    if (!t) return;
-    t.index++;
-    if (t.index >= t.questions.length) return finishTest(chatId, userId);
-    sendQuestion(chatId, userId);
+${q.q}`,
+{
+  parse_mode:"Markdown",
+  reply_markup:{
+    inline_keyboard:q.options.map((o,i)=>[{ text:o, callback_data:`ans_${i}`}])
   }
 });
+}
 
-/* ================= FINISH TEST ================= */
+/* ================= CALLBACKS ================= */
 
-async function finishTest(chatId, userId) {
-  const t = activeTests[userId];
-  if (!t) return;
+bot.on("callback_query",async q=>{
+  const chatId=q.message.chat.id;
+  const userId=q.from.id;
 
-  const timeTaken = Math.floor((Date.now() - t.startTime) / 1000);
-
-  if (t.type === "daily") {
-    await Attempt.create({
-      user_id: userId,
-      date: t.date,
-      score: t.score,
-      timeTaken
-    });
-
-    await User.updateOne(
-      { user_id: userId },
-      { $inc: { totalTests: 1, totalScore: t.score } }
-    );
+  if(q.data==="check_join"){
+    if(await isJoined(userId)){
+      const a=joinPending[userId];
+      delete joinPending[userId];
+      if(a==="daily") return startTest(chatId,userId,"daily");
+      if(a==="practice") return startTest(chatId,userId,"practice");
+    }
   }
 
-  if (t.type === "practice") {
-    await User.updateOne(
-      { user_id: userId },
-      {
-        $inc: {
-          practiceTests: 1,
-          practiceCorrect: t.score,
-          practiceWrong: 25 - t.score
-        }
-      }
-    );
+  if(q.data==="daily_test") return startTest(chatId,userId,"daily");
+  if(q.data==="practice_test") return startTest(chatId,userId,"practice");
+
+  if(q.data==="start_now"){
+    const t=activeTests[userId];
+    if(!t) return;
+    t.startTime=Date.now();
+    sendQuestion(chatId,userId);
+    setTimeout(()=>activeTests[userId]&&finishTest(chatId,userId),30*60*1000);
+  }
+
+  if(q.data.startsWith("ans_")){
+    const t=activeTests[userId];
+    if(!t) return;
+    const sel=+q.data.split("_")[1];
+    if(sel===t.questions[t.index].correct) t.score++;
+    t.index++;
+    return t.index>=25 ? finishTest(chatId,userId) : sendQuestion(chatId,userId);
+  }
+
+  if(q.data==="progress") return showProgress(chatId,userId);
+});
+
+/* ================= FINISH ================= */
+
+async function finishTest(chatId,userId){
+  const t=activeTests[userId];
+  if(!t) return;
+  const time=Math.floor((Date.now()-t.startTime)/1000);
+
+  if(t.type==="daily" && !isOwner(userId)){
+    await Attempt.create({ user_id:userId,date:t.date,score:t.score,timeTaken:time });
+    await User.updateOne({ user_id:userId },{ $inc:{ totalTests:1,totalScore:t.score }});
+  }
+
+  if(t.type==="practice"){
+    await User.updateOne({ user_id:userId },{
+      $inc:{ practiceTests:1,practiceCorrect:t.score,practiceWrong:25-t.score }
+    });
   }
 
   delete activeTests[userId];
 
   await bot.sendMessage(chatId,
-    `✅ *Test Completed*\n⭐ Score: ${t.score}/25\n⏱️ Time: ${timeTaken}s`,
-    { parse_mode: "Markdown" }
+`✅ Test Completed
+⭐ Score: ${t.score}/25`
   );
 }
 
 /* ================= PROGRESS ================= */
 
-async function showProgress(chatId, userId) {
-  const u = await User.findOne({ user_id: userId });
-  if (!u) return;
-
+async function showProgress(chatId,userId){
+  const u=await User.findOne({ user_id:userId });
+  const avg=u.totalTests?(u.totalScore/u.totalTests).toFixed(1):0;
   await bot.sendMessage(chatId,
 `📊 *My Progress*
 
-🧬 Tests: ${u.totalTests}
-⭐ Score: ${u.totalScore}
-
-🔁 Practice Correct: ${u.practiceCorrect}
-❌ Wrong: ${u.practiceWrong}`,
-    { parse_mode: "Markdown" }
-  );
+Daily Attempts: ${u.totalTests}
+Avg Score: ${avg}/25
+Practice Sessions: ${u.practiceTests}`,
+{ parse_mode:"Markdown" });
 }
-
-/* ================= MIDNIGHT CRON ================= */
-
-cron.schedule("0 0 * * *", async () => {
-  const users = await User.find({});
-  for (const u of users) {
-    bot.sendMessage(u.user_id,
-      "🧬 New Biology Test is LIVE!"
-    ).catch(()=>{});
-  }
-});
 /*************************************************
  * NEET ASPIRANTS BOT — PART 2 (FINAL)
  * OWNER / ADMIN UPLOAD MODULE

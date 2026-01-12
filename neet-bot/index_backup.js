@@ -433,10 +433,11 @@ async function showProgress(chatId, userId) {
 
 /*************************************************
  * NEET ASPIRANTS BOT — PART 2
- * OWNER UPLOAD + /DONE + STRONG PARSER (FIXED)
+ * OWNER UPLOAD + /DONE + STRONG PARSER
+ * ADD-ONLY MODULE (SAFE WITH PART-1)
  *************************************************/
 
-/* ============== OWNER STATE ============== */
+/* ================= OWNER STATE ================= */
 
 const ADMIN = {
   uploads: {},   // { ownerId: { type, step, date, buffer } }
@@ -446,14 +447,14 @@ const ADMIN = {
 function ownerLog(text) {
   ADMIN.logs.unshift(`• ${text} (${new Date().toLocaleString()})`);
   ADMIN.logs = ADMIN.logs.slice(0, 20);
-  bot.sendMessage(OWNER_ID, `📜 OWNER LOG\n${text}`).catch(() => {});
+  bot.sendMessage(OWNER_ID, `📜 OWNER LOG\n${text}`).catch(()=>{});
 }
 
 function validDate(d) {
   return /^\d{4}-\d{2}-\d{2}$/.test(d);
 }
 
-/* ============== OWNER PANEL ============== */
+/* ================= OWNER PANEL ENTRY ================= */
 
 bot.onText(/\/owner_panel/, async msg => {
   if (!isOwnerUser(msg.from.id)) return;
@@ -461,40 +462,104 @@ bot.onText(/\/owner_panel/, async msg => {
   await bot.sendMessage(msg.chat.id,
 `👑 *OWNER CONTROL PANEL*
 
-Choose an action 👇`,
+Choose what you want to do 👇`,
     {
       parse_mode: "Markdown",
       reply_markup: {
         inline_keyboard: [
-          [{ text: "📤 Upload Daily Test", callback_data: "ADMIN_DAILY" }],
-          [{ text: "🔁 Upload Practice Bank", callback_data: "ADMIN_PRACTICE" }],
-          [{ text: "📜 Owner Logs", callback_data: "ADMIN_LOGS" }]
+          [{ text: "📤 Upload Daily Test", callback_data: "admin_daily_upload" }],
+          [{ text: "🔁 Upload Practice Bank", callback_data: "admin_practice_upload" }],
+          [{ text: "📜 Owner Logs", callback_data: "admin_logs" }]
         ]
       }
     }
   );
 });
 
-/* ============== STRONG PARSER (TELEGRAM SAFE) ============== */
+/* ================= START DAILY UPLOAD ================= */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "admin_daily_upload") {
+    ADMIN.uploads[OWNER_ID] = {
+      type: "daily",
+      step: "date",
+      date: null,
+      buffer: ""
+    };
+
+    ownerLog("Started DAILY upload");
+
+    return bot.sendMessage(OWNER_ID,
+`📅 *Daily Test Upload*
+
+Send date in format:
+YYYY-MM-DD`,
+      { parse_mode: "Markdown" }
+    );
+  }
+});
+
+/* ================= START PRACTICE UPLOAD ================= */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "admin_practice_upload") {
+    ADMIN.uploads[OWNER_ID] = {
+      type: "practice",
+      step: "date",
+      date: null,
+      buffer: ""
+    };
+
+    ownerLog("Started PRACTICE upload");
+
+    return bot.sendMessage(OWNER_ID,
+`📅 *Practice Question Bank*
+
+Send date (for grouping only):
+YYYY-MM-DD`,
+      { parse_mode: "Markdown" }
+    );
+  }
+});
+
+/* ================= STRONG QUESTION PARSER ================= */
+
+/*
+SUPPORTED FORMAT (copy-paste friendly):
+
+Q1. Question text
+A) option
+B) option
+C) option
+D) option
+Ans: B
+Reason: explanation
+
+(blank line allowed)
+*/
 
 function parseQuestions(raw) {
   const blocks = raw
-    .split(/(?:\n\s*---+\s*\n)|(?:\n{2,})/)
+    .split(/\n\s*\n+/)
     .map(b => b.trim())
     .filter(Boolean);
 
   const out = [];
 
-  for (const b of blocks) {
-    const q = b.match(/Q\d*\.?\s*(.+)/i);
-    const opts = [...b.matchAll(/^[A-D]\)\s*(.+)$/gm)];
-    const ans = b.match(/Ans:\s*([A-D])/i);
-    const reason = b.match(/Reason:\s*(.+)/i);
+  for (const block of blocks) {
+    const qMatch = block.match(/Q\d*\.?\s*(.+)/i);
+    const opts = [...block.matchAll(/^[A-D]\)\s*(.+)$/gm)];
+    const ans = block.match(/Ans:\s*([A-D])/i);
+    const reason = block.match(/Reason:\s*(.+)/i);
 
-    if (!q || opts.length !== 4 || !ans) continue;
+    if (!qMatch || opts.length !== 4 || !ans) continue;
 
     out.push({
-      q: q[1].trim(),
+      q: qMatch[1].trim(),
       options: opts.map(o => o[1].trim()),
       correct: ["A","B","C","D"].indexOf(ans[1].toUpperCase()),
       reason: reason ? reason[1].trim() : "Explanation not provided"
@@ -504,91 +569,7 @@ function parseQuestions(raw) {
   return out;
 }
 
-/* ============== SINGLE CALLBACK ROUTER ============== */
-
-bot.on("callback_query", async q => {
-  const id = q.from.id;
-  if (!isOwnerUser(id)) return;
-
-  const session = ADMIN.uploads[id];
-
-  /* ---- START DAILY ---- */
-  if (q.data === "ADMIN_DAILY") {
-    if (session) {
-      return bot.sendMessage(id, "⚠️ Finish current upload first (/done)");
-    }
-
-    ADMIN.uploads[id] = {
-      type: "daily",
-      step: "date",
-      date: null,
-      buffer: ""
-    };
-
-    ownerLog("Started DAILY upload");
-
-    return bot.sendMessage(id,
-`📅 *Daily Test Upload*
-
-Send date:
-YYYY-MM-DD`,
-      { parse_mode: "Markdown" }
-    );
-  }
-
-  /* ---- START PRACTICE ---- */
-  if (q.data === "ADMIN_PRACTICE") {
-    if (session) {
-      return bot.sendMessage(id, "⚠️ Finish current upload first (/done)");
-    }
-
-    ADMIN.uploads[id] = {
-      type: "practice",
-      step: "date",
-      date: null,
-      buffer: ""
-    };
-
-    ownerLog("Started PRACTICE upload");
-
-    return bot.sendMessage(id,
-`📅 *Practice Bank Upload*
-
-Send date (grouping only):
-YYYY-MM-DD`,
-      { parse_mode: "Markdown" }
-    );
-  }
-
-  /* ---- OVERWRITE CONFIRM ---- */
-  if (q.data === "ADMIN_OVERWRITE_YES") {
-    if (!session) return;
-
-    await Question.deleteMany({ date: session.date, type: session.type });
-    session.step = "questions";
-
-    ownerLog(`Overwrite confirmed: ${session.type} ${session.date}`);
-
-    return bot.sendMessage(id,
-`📝 Old data deleted.
-Paste questions now.
-Send /done when finished`);
-  }
-
-  if (q.data === "ADMIN_OVERWRITE_NO") {
-    delete ADMIN.uploads[id];
-    ownerLog("Upload cancelled");
-    return bot.sendMessage(id, "❌ Upload cancelled");
-  }
-
-  /* ---- LOGS ---- */
-  if (q.data === "ADMIN_LOGS") {
-    const logs = ADMIN.logs.length ? ADMIN.logs.join("\n") : "No logs yet";
-    return bot.sendMessage(id, `📜 *OWNER LOGS*\n\n${logs}`, { parse_mode: "Markdown" });
-  }
-});
-
-/* ============== OWNER MESSAGE HANDLER ============== */
+/* ================= OWNER MESSAGE HANDLER ================= */
 
 bot.on("message", async msg => {
   if (!isOwnerUser(msg.from?.id)) return;
@@ -596,11 +577,11 @@ bot.on("message", async msg => {
   const session = ADMIN.uploads[OWNER_ID];
   if (!session) return;
 
-  /* ---- DATE ---- */
+  /* STEP 1: DATE */
   if (session.step === "date") {
     const d = msg.text?.trim();
     if (!validDate(d)) {
-      return bot.sendMessage(OWNER_ID, "❌ Invalid date. Use YYYY-MM-DD");
+      return bot.sendMessage(OWNER_ID, "❌ Invalid date format. Use YYYY-MM-DD");
     }
 
     const exists = await Question.countDocuments({ date: d, type: session.type });
@@ -611,12 +592,12 @@ bot.on("message", async msg => {
       return bot.sendMessage(OWNER_ID,
 `⚠️ ${session.type.toUpperCase()} already exists for ${d}
 
-Overwrite?`,
+Overwrite existing questions?`,
         {
           reply_markup: {
             inline_keyboard: [
-              [{ text: "✅ Overwrite", callback_data: "ADMIN_OVERWRITE_YES" }],
-              [{ text: "❌ Cancel", callback_data: "ADMIN_OVERWRITE_NO" }]
+              [{ text: "✅ Overwrite", callback_data: "admin_overwrite_yes" }],
+              [{ text: "❌ Cancel", callback_data: "admin_overwrite_no" }]
             ]
           }
         }
@@ -625,23 +606,49 @@ Overwrite?`,
 
     session.step = "questions";
     return bot.sendMessage(OWNER_ID,
-`📝 Paste questions now
-(multiple messages allowed)
+`📝 Paste all questions now
+(you can send multiple messages)
 
 Send /done when finished`);
   }
 
-  /* ---- QUESTIONS ---- */
+  /* STEP 2: QUESTIONS */
   if (session.step === "questions" && msg.text && !msg.text.startsWith("/")) {
-    session.buffer += "\n\n" + msg.text;
-    const count = parseQuestions(session.buffer).length;
+    session.buffer += "\n" + msg.text;
+    const parsed = parseQuestions(session.buffer);
 
     return bot.sendMessage(OWNER_ID,
-`📝 Detected questions so far: ${count}`);
+`📝 Detected questions so far: ${parsed.length}`);
   }
 });
 
-/* ============== /DONE ============== */
+/* ================= OVERWRITE CONFIRM ================= */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  const session = ADMIN.uploads[OWNER_ID];
+  if (!session) return;
+
+  if (q.data === "admin_overwrite_no") {
+    delete ADMIN.uploads[OWNER_ID];
+    ownerLog("Upload cancelled");
+    return bot.sendMessage(OWNER_ID, "❌ Upload cancelled");
+  }
+
+  if (q.data === "admin_overwrite_yes") {
+    await Question.deleteMany({ date: session.date, type: session.type });
+    session.step = "questions";
+    ownerLog(`Overwrite confirmed for ${session.type} ${session.date}`);
+
+    return bot.sendMessage(OWNER_ID,
+`📝 Old data deleted.
+Paste new questions now
+Send /done when finished`);
+  }
+});
+
+/* ================= /DONE FINAL SUBMIT ================= */
 
 bot.onText(/\/done/, async msg => {
   if (!isOwnerUser(msg.from.id)) return;
@@ -669,7 +676,9 @@ Detected: ${parsed.length}`);
     type: session.type
   })));
 
-  ownerLog(`${session.type.toUpperCase()} uploaded — ${session.date} (${parsed.length} Q)`);
+  ownerLog(
+    `${session.type.toUpperCase()} uploaded — ${session.date} (${parsed.length} Q)`
+  );
 
   await bot.sendMessage(OWNER_ID,
 `✅ Upload successful
@@ -680,8 +689,22 @@ Detected: ${parsed.length}`);
   delete ADMIN.uploads[OWNER_ID];
 });
 
+/* ================= OWNER LOG VIEW ================= */
 
-;
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "admin_logs") {
+    const logs = ADMIN.logs.length
+      ? ADMIN.logs.join("\n")
+      : "No logs yet";
+
+    return bot.sendMessage(OWNER_ID,
+`📜 *OWNER LOGS*\n\n${logs}`,
+      { parse_mode: "Markdown" }
+    );
+  }
+});
 /*************************************************
  * NEET ASPIRANTS BOT — PART 3
  * PRACTICE RANDOM ENGINE + ANALYTICS

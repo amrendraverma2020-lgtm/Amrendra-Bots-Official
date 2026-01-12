@@ -430,13 +430,13 @@ async function showProgress(chatId, userId) {
     { parse_mode: "Markdown" }
   );
 }
-
 /*************************************************
  * NEET ASPIRANTS BOT — PART 2
- * OWNER UPLOAD + /DONE + STRONG PARSER (FIXED)
+ * OWNER / ADMIN MODULE (FINAL, CLEAN)
+ * Safe with PART-1 | No duplicate handlers
  *************************************************/
 
-/* ============== OWNER STATE ============== */
+/* ================= OWNER STATE ================= */
 
 const ADMIN = {
   uploads: {},   // { ownerId: { type, step, date, buffer } }
@@ -453,29 +453,18 @@ function validDate(d) {
   return /^\d{4}-\d{2}-\d{2}$/.test(d);
 }
 
-/* ============== OWNER PANEL ============== */
+/* ================= STRONG QUESTION PARSER ================= */
+/*
+SUPPORTED FORMAT:
 
-bot.onText(/\/owner_panel/, async msg => {
-  if (!isOwnerUser(msg.from.id)) return;
-
-  await bot.sendMessage(msg.chat.id,
-`👑 *OWNER CONTROL PANEL*
-
-Choose an action 👇`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "📤 Upload Daily Test", callback_data: "ADMIN_DAILY" }],
-          [{ text: "🔁 Upload Practice Bank", callback_data: "ADMIN_PRACTICE" }],
-          [{ text: "📜 Owner Logs", callback_data: "ADMIN_LOGS" }]
-        ]
-      }
-    }
-  );
-});
-
-/* ============== STRONG PARSER (TELEGRAM SAFE) ============== */
+Q1. Question text
+A) option
+B) option
+C) option
+D) option
+Ans: B
+Reason: explanation
+*/
 
 function parseQuestions(raw) {
   const blocks = raw
@@ -504,7 +493,27 @@ function parseQuestions(raw) {
   return out;
 }
 
-/* ============== SINGLE CALLBACK ROUTER ============== */
+/* ================= OWNER PANEL COMMAND ================= */
+
+bot.onText(/\/owner_panel/, async msg => {
+  if (!isOwnerUser(msg.from.id)) return;
+
+  await bot.sendMessage(msg.chat.id,
+`👑 OWNER CONTROL PANEL
+
+Choose an action 👇`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "📤 Upload & Question Bank", callback_data: "UPLOAD_BANK" }],
+          [{ text: "📜 Owner Logs", callback_data: "ADMIN_LOGS" }]
+        ]
+      }
+    }
+  );
+});
+
+/* ================= SINGLE CALLBACK ROUTER ================= */
 
 bot.on("callback_query", async q => {
   const id = q.from.id;
@@ -512,7 +521,42 @@ bot.on("callback_query", async q => {
 
   const session = ADMIN.uploads[id];
 
-  /* ---- START DAILY ---- */
+  /* ---------- UPLOAD BANK MENU ---------- */
+  if (q.data === "UPLOAD_BANK") {
+    return bot.sendMessage(id,
+`📤 UPLOAD & QUESTION BANK
+
+Choose upload type 👇`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🧬 Upload Daily Test", callback_data: "ADMIN_DAILY" }],
+            [{ text: "🔁 Upload Practice Bank", callback_data: "ADMIN_PRACTICE" }],
+            [{ text: "⬅️ Back", callback_data: "OWNER_BACK" }]
+          ]
+        }
+      }
+    );
+  }
+
+  /* ---------- BACK TO OWNER PANEL ---------- */
+  if (q.data === "OWNER_BACK") {
+    return bot.sendMessage(id,
+`👑 OWNER CONTROL PANEL
+
+Choose an action 👇`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "📤 Upload & Question Bank", callback_data: "UPLOAD_BANK" }],
+            [{ text: "📜 Owner Logs", callback_data: "ADMIN_LOGS" }]
+          ]
+        }
+      }
+    );
+  }
+
+  /* ---------- START DAILY UPLOAD ---------- */
   if (q.data === "ADMIN_DAILY") {
     if (session) {
       return bot.sendMessage(id, "⚠️ Finish current upload first (/done)");
@@ -528,15 +572,13 @@ bot.on("callback_query", async q => {
     ownerLog("Started DAILY upload");
 
     return bot.sendMessage(id,
-`📅 *Daily Test Upload*
+`📅 DAILY TEST UPLOAD
 
-Send date:
-YYYY-MM-DD`,
-      { parse_mode: "Markdown" }
-    );
+Send date in format:
+YYYY-MM-DD`);
   }
 
-  /* ---- START PRACTICE ---- */
+  /* ---------- START PRACTICE UPLOAD ---------- */
   if (q.data === "ADMIN_PRACTICE") {
     if (session) {
       return bot.sendMessage(id, "⚠️ Finish current upload first (/done)");
@@ -552,15 +594,13 @@ YYYY-MM-DD`,
     ownerLog("Started PRACTICE upload");
 
     return bot.sendMessage(id,
-`📅 *Practice Bank Upload*
+`📅 PRACTICE BANK UPLOAD
 
 Send date (grouping only):
-YYYY-MM-DD`,
-      { parse_mode: "Markdown" }
-    );
+YYYY-MM-DD`);
   }
 
-  /* ---- OVERWRITE CONFIRM ---- */
+  /* ---------- OVERWRITE CONFIRM ---------- */
   if (q.data === "ADMIN_OVERWRITE_YES") {
     if (!session) return;
 
@@ -581,14 +621,17 @@ Send /done when finished`);
     return bot.sendMessage(id, "❌ Upload cancelled");
   }
 
-  /* ---- LOGS ---- */
+  /* ---------- OWNER LOGS ---------- */
   if (q.data === "ADMIN_LOGS") {
     const logs = ADMIN.logs.length ? ADMIN.logs.join("\n") : "No logs yet";
-    return bot.sendMessage(id, `📜 *OWNER LOGS*\n\n${logs}`, { parse_mode: "Markdown" });
+    return bot.sendMessage(id,
+`📜 OWNER LOGS
+
+${logs}`);
   }
 });
 
-/* ============== OWNER MESSAGE HANDLER ============== */
+/* ================= OWNER MESSAGE HANDLER ================= */
 
 bot.on("message", async msg => {
   if (!isOwnerUser(msg.from?.id)) return;
@@ -596,7 +639,7 @@ bot.on("message", async msg => {
   const session = ADMIN.uploads[OWNER_ID];
   if (!session) return;
 
-  /* ---- DATE ---- */
+  /* ---------- DATE STEP ---------- */
   if (session.step === "date") {
     const d = msg.text?.trim();
     if (!validDate(d)) {
@@ -611,7 +654,7 @@ bot.on("message", async msg => {
       return bot.sendMessage(OWNER_ID,
 `⚠️ ${session.type.toUpperCase()} already exists for ${d}
 
-Overwrite?`,
+Overwrite existing questions?`,
         {
           reply_markup: {
             inline_keyboard: [
@@ -625,13 +668,13 @@ Overwrite?`,
 
     session.step = "questions";
     return bot.sendMessage(OWNER_ID,
-`📝 Paste questions now
+`📝 Paste all questions now
 (multiple messages allowed)
 
 Send /done when finished`);
   }
 
-  /* ---- QUESTIONS ---- */
+  /* ---------- QUESTIONS STEP ---------- */
   if (session.step === "questions" && msg.text && !msg.text.startsWith("/")) {
     session.buffer += "\n\n" + msg.text;
     const count = parseQuestions(session.buffer).length;
@@ -641,7 +684,7 @@ Send /done when finished`);
   }
 });
 
-/* ============== /DONE ============== */
+/* ================= /DONE FINALIZATION ================= */
 
 bot.onText(/\/done/, async msg => {
   if (!isOwnerUser(msg.from.id)) return;
@@ -669,7 +712,9 @@ Detected: ${parsed.length}`);
     type: session.type
   })));
 
-  ownerLog(`${session.type.toUpperCase()} uploaded — ${session.date} (${parsed.length} Q)`);
+  ownerLog(
+    `${session.type.toUpperCase()} uploaded — ${session.date} (${parsed.length} Q)`
+  );
 
   await bot.sendMessage(OWNER_ID,
 `✅ Upload successful
@@ -679,9 +724,6 @@ Detected: ${parsed.length}`);
 
   delete ADMIN.uploads[OWNER_ID];
 });
-
-
-;
 /*************************************************
  * NEET ASPIRANTS BOT — PART 3
  * PRACTICE RANDOM ENGINE + ANALYTICS

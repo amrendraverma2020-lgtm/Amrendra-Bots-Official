@@ -8,7 +8,6 @@ require("dotenv").config();
 const TelegramBot = require("node-telegram-bot-api");
 const express = require("express");
 const mongoose = require("mongoose");
-const cron = require("node-cron");
 
 /* ================= CONFIG ================= */
 
@@ -72,7 +71,7 @@ app.listen(10000, async () => {
   console.log("🚀 Bot running (PART-1)");
 });
 
-/* ================= HELPERS ================= */
+/* ================= HELPERS (SINGLE SOURCE) ================= */
 
 const todayDate = () => new Date().toISOString().split("T")[0];
 const isOwnerUser = (id) => id === OWNER_ID;
@@ -88,8 +87,8 @@ async function isJoined(userId) {
 
 /* ================= STATE ================= */
 
-const activeTests = {}; // userId -> session
-const joinPending = {}; // userId -> action
+const activeTests = {};   // userId → test session
+const joinPending = {};  // userId → pending action
 
 /* ================= /START ================= */
 
@@ -116,7 +115,6 @@ Daily tests • Practice • Progress tracking
 `;
 
   await bot.sendMessage(chatId, welcome, { parse_mode: "Markdown" });
-
   await showLeaderboard(chatId, todayDate());
 
   await bot.sendMessage(chatId, "🚀 *START NOW*", {
@@ -135,11 +133,11 @@ async function requireJoin(chatId, userId, action) {
   await bot.sendMessage(chatId,
 `🔒 *Channel Join Required*
 
-Is bot ke saare features use karne ke liye  
+Is bot ke saare features use karne ke liye
 aapko pehle hamara official channel join karna hoga.
 
 👇 Steps:
-1️⃣ “Join Channel” par tap karein  
+1️⃣ “Join Channel” par tap karein
 2️⃣ Join ke baad “I have joined” dabayein`,
     {
       parse_mode: "Markdown",
@@ -159,11 +157,13 @@ async function showLeaderboard(chatId, date) {
   const rows = await Attempt.aggregate([
     { $match: { date } },
     { $sort: { score: -1, timeTaken: 1 } },
-    { $group: {
+    {
+      $group: {
         _id: "$user_id",
         score: { $first: "$score" },
         timeTaken: { $first: "$timeTaken" }
-    }},
+      }
+    },
     { $sort: { score: -1, timeTaken: 1 } },
     { $limit: 10 }
   ]);
@@ -185,7 +185,7 @@ async function showLeaderboard(chatId, date) {
 /* ================= TIMER ================= */
 
 function remainingTime(t) {
-  const total = 25 * 60; // 25 min = 25 questions
+  const total = 25 * 60; // 25 questions = 25 minutes
   const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
   const left = Math.max(total - elapsed, 0);
   return {
@@ -227,23 +227,23 @@ async function startTest(chatId, userId, type) {
     startTime: null
   };
 
-  const intro =
+  await bot.sendMessage(chatId,
 `🧬 *${type === "daily" ? "Daily Biology Test" : "Practice Biology"}*
 
 📝 Total Questions: 25
 ⏱️ Time Limit: 25 Minutes
 
-👇 Ready?`;
-
-  await bot.sendMessage(chatId, intro, {
-    parse_mode: "Markdown",
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "▶️ Start", callback_data: "start_now" }],
-        [{ text: "❌ Cancel", callback_data: "cancel" }]
-      ]
+👇 Ready?`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "▶️ Start", callback_data: "start_now" }],
+          [{ text: "❌ Cancel", callback_data: "cancel" }]
+        ]
+      }
     }
-  });
+  );
 }
 
 /* ================= SEND QUESTION ================= */
@@ -254,42 +254,36 @@ function sendQuestion(chatId, userId) {
 
   const q = t.questions[t.index];
   const time = remainingTime(t);
+  t.answered = false;
 
-  const text =
+  bot.sendMessage(chatId,
 `🧬 *Question ${t.index + 1} / 25*
 ⏱️ Time Left: ${time.min} min ${time.sec} sec
 
 ${q.q}
 
 🅐 ${q.options[0]}        🅑 ${q.options[1]}
-🅒 ${q.options[2]}        🅓 ${q.options[3]}`;
-
-  t.answered = false;
-
-  bot.sendMessage(chatId, text, {
-    parse_mode: "Markdown",
-    reply_markup: {
-      inline_keyboard: [
-        [
-          { text: "🅐", callback_data: "ans_0" },
-          { text: "🅑", callback_data: "ans_1" }
-        ],
-        [
-          { text: "🅒", callback_data: "ans_2" },
-          { text: "🅓", callback_data: "ans_3" }
+🅒 ${q.options[2]}        🅓 ${q.options[3]}`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🅐", callback_data: "ans_0" }, { text: "🅑", callback_data: "ans_1" }],
+          [{ text: "🅒", callback_data: "ans_2" }, { text: "🅓", callback_data: "ans_3" }]
         ]
-      ]
+      }
     }
-  });
+  );
 }
 
-/* ================= CALLBACKS ================= */
+/* ================= CALLBACK ROUTER (SINGLE) ================= */
 
 bot.on("callback_query", async (q) => {
   const chatId = q.message.chat.id;
   const userId = q.from.id;
   const t = activeTests[userId];
 
+  /* MAIN MENU */
   if (q.data === "main_menu") {
     return bot.sendMessage(chatId, "🔥 Let’s improve your NEET score", {
       reply_markup: {
@@ -310,23 +304,22 @@ bot.on("callback_query", async (q) => {
     if (!t) return;
     t.startTime = Date.now();
     sendQuestion(chatId, userId);
-
     setTimeout(() => {
       if (activeTests[userId]) finishTest(chatId, userId, true);
     }, 25 * 60 * 1000);
+    return;
   }
 
   if (q.data.startsWith("ans_")) {
     if (!t || t.answered) return;
-
     t.answered = true;
+
     const sel = Number(q.data.split("_")[1]);
     const cq = t.questions[t.index];
-
     const correct = sel === cq.correct;
     if (correct) t.score++;
 
-    await bot.sendMessage(chatId,
+    return bot.sendMessage(chatId,
       correct
         ? `✅ Correct!\n\n✔️ ${cq.reason}`
         : `❌ Wrong!\n\n✅ Correct: ${["🅐","🅑","🅒","🅓"][cq.correct]}\n✔️ ${cq.reason}`,
@@ -343,8 +336,10 @@ bot.on("callback_query", async (q) => {
     if (!t) return;
     t.index++;
     if (t.index >= t.questions.length) return finishTest(chatId, userId, false);
-    sendQuestion(chatId, userId);
+    return sendQuestion(chatId, userId);
   }
+
+  if (q.data === "progress") return showProgress(chatId, userId);
 
   if (q.data === "check_join") {
     if (await isJoined(userId)) {
@@ -392,18 +387,12 @@ async function finishTest(chatId, userId, timeOver) {
 
   delete activeTests[userId];
 
-  const result =
+  await bot.sendMessage(chatId,
 timeOver
-? `⏰ *Time Over! Test Auto-Submitted*
-
-⭐ Score: ${t.score} / 25
-⏱️ Time: 25 minutes`
-: `✅ *Test Completed* 🎉
-
-⭐ Score: ${t.score} / 25
-⏱️ Time: ${Math.floor(timeTaken/60)} min ${timeTaken%60} sec`;
-
-  await bot.sendMessage(chatId, result, { parse_mode: "Markdown" });
+? `⏰ *Time Over! Test Auto-Submitted*\n\n⭐ Score: ${t.score} / 25`
+: `✅ *Test Completed* 🎉\n\n⭐ Score: ${t.score} / 25\n⏱️ Time: ${Math.floor(timeTaken/60)}m ${timeTaken%60}s`,
+    { parse_mode: "Markdown" }
+  );
 
   if (t.type === "daily") {
     await showLeaderboard(chatId, t.date);
@@ -432,31 +421,27 @@ async function showProgress(chatId, userId) {
 
 🔁 Practice
 • Sessions: ${u.practiceTests}
-• Accuracy: ${u.practiceCorrect + u.practiceWrong
+• Accuracy: ${
+  u.practiceCorrect + u.practiceWrong
     ? ((u.practiceCorrect / (u.practiceCorrect + u.practiceWrong)) * 100).toFixed(1)
-    : 0}%
-
-💡 Keep going 💪`,
+    : 0
+}%`,
     { parse_mode: "Markdown" }
   );
 }
+
 /*************************************************
  * NEET ASPIRANTS BOT — PART 2
- * OWNER / ADMIN FINAL MODULE
- * (UPLOAD + MANAGE + LOGS)
+ * OWNER UPLOAD + /DONE + STRONG PARSER
+ * ADD-ONLY MODULE (SAFE WITH PART-1)
  *************************************************/
 
-/* ===============================
-   OWNER HELPERS (NAMESPACE SAFE)
-================================ */
+/* ================= OWNER STATE ================= */
 
 const ADMIN = {
-  uploads: {},     // uploadSessions
-  logs: []         // owner action logs
+  uploads: {},   // { ownerId: { type, step, date, buffer } }
+  logs: []
 };
-
-  return id === OWNER_ID;
-}
 
 function ownerLog(text) {
   ADMIN.logs.unshift(`• ${text} (${new Date().toLocaleString()})`);
@@ -468,45 +453,38 @@ function validDate(d) {
   return /^\d{4}-\d{2}-\d{2}$/.test(d);
 }
 
-/* ===============================
-   OWNER PANEL (BUTTON UI)
-================================ */
+/* ================= OWNER PANEL ENTRY ================= */
 
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
+bot.onText(/\/owner_panel/, async msg => {
+  if (!isOwnerUser(msg.from.id)) return;
 
-  if (q.data === "owner_panel") {
-    return bot.sendMessage(q.message.chat.id,
+  await bot.sendMessage(msg.chat.id,
 `👑 *OWNER CONTROL PANEL*
 
-Choose a section 👇`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "📤 Upload Daily Test", callback_data: "admin_upload_daily" }],
-            [{ text: "🔁 Upload Practice Bank", callback_data: "admin_upload_practice" }],
-            [{ text: "📅 View / Manage Tests", callback_data: "admin_manage_tests" }],
-            [{ text: "📊 Bot Analytics", callback_data: "admin_analytics" }],
-            [{ text: "⚙️ Emergency Controls", callback_data: "admin_emergency" }]
-          ]
-        }
+Choose what you want to do 👇`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "📤 Upload Daily Test", callback_data: "admin_daily_upload" }],
+          [{ text: "🔁 Upload Practice Bank", callback_data: "admin_practice_upload" }],
+          [{ text: "📜 Owner Logs", callback_data: "admin_logs" }]
+        ]
       }
-    );
-  }
+    }
+  );
 });
 
-/* ===============================
-   START DAILY UPLOAD
-================================ */
+/* ================= START DAILY UPLOAD ================= */
 
 bot.on("callback_query", async q => {
   if (!isOwnerUser(q.from.id)) return;
 
-  if (q.data === "admin_upload_daily") {
+  if (q.data === "admin_daily_upload") {
     ADMIN.uploads[OWNER_ID] = {
       type: "daily",
       step: "date",
+      date: null,
       buffer: ""
     };
 
@@ -522,17 +500,16 @@ YYYY-MM-DD`,
   }
 });
 
-/* ===============================
-   START PRACTICE UPLOAD
-================================ */
+/* ================= START PRACTICE UPLOAD ================= */
 
 bot.on("callback_query", async q => {
   if (!isOwnerUser(q.from.id)) return;
 
-  if (q.data === "admin_upload_practice") {
+  if (q.data === "admin_practice_upload") {
     ADMIN.uploads[OWNER_ID] = {
       type: "practice",
       step: "date",
+      date: null,
       buffer: ""
     };
 
@@ -541,30 +518,42 @@ bot.on("callback_query", async q => {
     return bot.sendMessage(OWNER_ID,
 `📅 *Practice Question Bank*
 
-Send date (used only for grouping):
+Send date (for grouping only):
 YYYY-MM-DD`,
       { parse_mode: "Markdown" }
     );
   }
 });
 
-/* ===============================
-   STRONG QUESTION PARSER
-================================ */
+/* ================= STRONG QUESTION PARSER ================= */
 
-function parseQuestionBlock(raw) {
+/*
+SUPPORTED FORMAT (copy-paste friendly):
+
+Q1. Question text
+A) option
+B) option
+C) option
+D) option
+Ans: B
+Reason: explanation
+
+(blank line allowed)
+*/
+
+function parseQuestions(raw) {
   const blocks = raw
-    .split(/(?:\n\s*---+\s*\n)|(?:\n{2,})/)
+    .split(/\n\s*\n+/)
     .map(b => b.trim())
     .filter(Boolean);
 
   const out = [];
 
-  for (const b of blocks) {
-    const qMatch = b.match(/Q\d*\.?\s*(.+)/i);
-    const opts = [...b.matchAll(/^[A-D]\)\s*(.+)$/gm)];
-    const ans = b.match(/Ans:\s*([A-D])/i);
-    const reason = b.match(/Reason:\s*(.+)/i);
+  for (const block of blocks) {
+    const qMatch = block.match(/Q\d*\.?\s*(.+)/i);
+    const opts = [...block.matchAll(/^[A-D]\)\s*(.+)$/gm)];
+    const ans = block.match(/Ans:\s*([A-D])/i);
+    const reason = block.match(/Reason:\s*(.+)/i);
 
     if (!qMatch || opts.length !== 4 || !ans) continue;
 
@@ -579,20 +568,19 @@ function parseQuestionBlock(raw) {
   return out;
 }
 
-/* ===============================
-   OWNER MESSAGE HANDLER
-================================ */
+/* ================= OWNER MESSAGE HANDLER ================= */
 
 bot.on("message", async msg => {
   if (!isOwnerUser(msg.from?.id)) return;
+
   const session = ADMIN.uploads[OWNER_ID];
   if (!session) return;
 
-  /* DATE STEP */
+  /* STEP 1: DATE */
   if (session.step === "date") {
     const d = msg.text?.trim();
     if (!validDate(d)) {
-      return bot.sendMessage(OWNER_ID, "❌ Invalid date format");
+      return bot.sendMessage(OWNER_ID, "❌ Invalid date format. Use YYYY-MM-DD");
     }
 
     const exists = await Question.countDocuments({ date: d, type: session.type });
@@ -603,7 +591,7 @@ bot.on("message", async msg => {
       return bot.sendMessage(OWNER_ID,
 `⚠️ ${session.type.toUpperCase()} already exists for ${d}
 
-Overwrite?`,
+Overwrite existing questions?`,
         {
           reply_markup: {
             inline_keyboard: [
@@ -617,26 +605,27 @@ Overwrite?`,
 
     session.step = "questions";
     return bot.sendMessage(OWNER_ID,
-`📝 Paste all questions now  
+`📝 Paste all questions now
+(you can send multiple messages)
+
 Send /done when finished`);
   }
 
-  /* QUESTIONS STEP */
+  /* STEP 2: QUESTIONS */
   if (session.step === "questions" && msg.text && !msg.text.startsWith("/")) {
     session.buffer += "\n" + msg.text;
-    const parsed = parseQuestionBlock(session.buffer);
+    const parsed = parseQuestions(session.buffer);
 
     return bot.sendMessage(OWNER_ID,
 `📝 Detected questions so far: ${parsed.length}`);
   }
 });
 
-/* ===============================
-   OVERWRITE CONFIRMATION
-================================ */
+/* ================= OVERWRITE CONFIRM ================= */
 
 bot.on("callback_query", async q => {
   if (!isOwnerUser(q.from.id)) return;
+
   const session = ADMIN.uploads[OWNER_ID];
   if (!session) return;
 
@@ -650,31 +639,34 @@ bot.on("callback_query", async q => {
     await Question.deleteMany({ date: session.date, type: session.type });
     session.step = "questions";
     ownerLog(`Overwrite confirmed for ${session.type} ${session.date}`);
+
     return bot.sendMessage(OWNER_ID,
-      "📝 Old data deleted. Paste new questions now.\nSend /done when finished");
+`📝 Old data deleted.
+Paste new questions now
+Send /done when finished`);
   }
 });
 
-/* ===============================
-   /DONE FINALIZATION
-================================ */
+/* ================= /DONE FINAL SUBMIT ================= */
 
 bot.onText(/\/done/, async msg => {
   if (!isOwnerUser(msg.from.id)) return;
+
   const session = ADMIN.uploads[OWNER_ID];
   if (!session) {
     return bot.sendMessage(OWNER_ID, "❌ No active upload session");
   }
 
-  const parsed = parseQuestionBlock(session.buffer);
+  const parsed = parseQuestions(session.buffer);
+
+  if (parsed.length === 0) {
+    return bot.sendMessage(OWNER_ID, "❌ No valid questions detected");
+  }
 
   if (session.type === "daily" && parsed.length !== 25) {
     return bot.sendMessage(OWNER_ID,
-      `❌ Daily test must have EXACTLY 25 questions\nDetected: ${parsed.length}`);
-  }
-
-  if (parsed.length < 1) {
-    return bot.sendMessage(OWNER_ID, "❌ No valid questions found");
+`❌ Daily test must have EXACTLY 25 questions
+Detected: ${parsed.length}`);
   }
 
   await Question.insertMany(parsed.map(q => ({
@@ -696,206 +688,403 @@ bot.onText(/\/done/, async msg => {
   delete ADMIN.uploads[OWNER_ID];
 });
 
-/* ===============================
-   MIDNIGHT AUTO TEST + REPORT
-================================ */
+/* ================= OWNER LOG VIEW ================= */
 
-cron.schedule("0 0 * * *", async () => {
-  const users = await User.find({});
-  let sent = 0;
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
 
-  for (const u of users) {
-    try {
-      await bot.sendMessage(u.user_id,
-        "🧬 New Biology Test is LIVE!\n25 Questions | 30 Minutes\nAll the best 💪"
-      );
-      sent++;
-    } catch {}
+  if (q.data === "admin_logs") {
+    const logs = ADMIN.logs.length
+      ? ADMIN.logs.join("\n")
+      : "No logs yet";
+
+    return bot.sendMessage(OWNER_ID,
+`📜 *OWNER LOGS*\n\n${logs}`,
+      { parse_mode: "Markdown" }
+    );
   }
-
-  ownerLog(`Midnight test alert sent to ${sent} users`);
 });
-
 /*************************************************
  * NEET ASPIRANTS BOT — PART 3
- * ADMIN ANALYTICS + VIEW / DELETE (BUTTON UI)
- * OWNER ONLY • ADD-ONLY MODULE
+ * PRACTICE RANDOM ENGINE + ANALYTICS
+ * ADD-ONLY • SAFE • LOCKED
  *************************************************/
 
-/* ===============================================
-   ADMIN MENU (BUTTON BASED)
-================================================ */
+/* =================================================
+   PRACTICE RANDOM ENGINE (30–DAY / FULL POOL)
+================================================= */
 
-bot.onText(/\/admin_panel/, async msg => {
-  if (msg.from.id !== OWNER_ID) return;
+/*
+RULES (LOCKED):
+• Practice questions = unlimited bank
+• Owner ek saath 100–200+ Q upload kare
+• User ko har attempt me RANDOM 25 milenge
+• Daily test se completely independent
+• Practice attempts unlimited
+• No leaderboard, no rank
+*/
 
-  await bot.sendMessage(msg.chat.id,
-`👑 *OWNER CONTROL PANEL*
+async function getRandomPracticeQuestions() {
+  const total = await Question.countDocuments({ type: "practice" });
+  if (total < 25) return [];
 
-Choose a section below 👇`,
+  const skip = Math.max(
+    0,
+    Math.floor(Math.random() * (total - 25))
+  );
+
+  return Question.find({ type: "practice" })
+    .skip(skip)
+    .limit(25);
+}
+
+/* =================================================
+   OVERRIDE PRACTICE START (SAFE HOOK)
+================================================= */
+
+/*
+We hook ONLY practice flow.
+Daily test logic remains untouched.
+*/
+
+const originalStartTest = startTest;
+
+startTest = async function (chatId, userId, type) {
+  if (type !== "practice") {
+    return originalStartTest(chatId, userId, type);
+  }
+
+  if (!(await isJoined(userId))) {
+    return requireJoin(chatId, userId, "practice");
+  }
+
+  const qs = await getRandomPracticeQuestions();
+
+  if (!qs.length) {
+    return bot.sendMessage(chatId,
+      "❌ Practice question bank not ready yet.\nPlease try later."
+    );
+  }
+
+  activeTests[userId] = {
+    type: "practice",
+    date: todayDate(),
+    questions: qs,
+    index: 0,
+    score: 0,
+    answered: false,
+    startTime: null
+  };
+
+  const intro =
+`🔁 *Biology Practice Test*
+
+📝 Total Questions: 25
+⏱️ Time Limit: 25 Minutes
+📚 Purpose: Learning + Concept clarity
+
+📌 Rules:
+• Practice test multiple times de sakte ho
+• Score leaderboard me count nahi hota
+• Har question ke baad reason milega
+• Timer rukega nahi
+• 25 min baad auto-submit
+
+👇 Ready ho?`;
+
+  await bot.sendMessage(chatId, intro, {
+    parse_mode: "Markdown",
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "▶️ Start Practice", callback_data: "start_now" }],
+        [{ text: "❌ Cancel", callback_data: "cancel" }]
+      ]
+    }
+  });
+};
+
+/* =================================================
+   PRACTICE FINISH SCREEN (DETAILED)
+================================================= */
+
+const originalFinishTest = finishTest;
+
+finishTest = async function (chatId, userId, timeOver) {
+  const t = activeTests[userId];
+  if (!t) return;
+
+  // DAILY → original logic
+  if (t.type === "daily") {
+    return originalFinishTest(chatId, userId, timeOver);
+  }
+
+  // PRACTICE RESULT
+  const timeTaken = Math.floor((Date.now() - t.startTime) / 1000);
+  const correct = t.score;
+  const wrong = 25 - correct;
+  const accuracy = ((correct / 25) * 100).toFixed(1);
+
+  await User.updateOne(
+    { user_id: userId },
     {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "📊 Analytics", callback_data: "admin_analytics" }],
-          [{ text: "📋 View Tests", callback_data: "admin_view_tests" }],
-          [{ text: "🗑️ Delete Tests", callback_data: "admin_delete_tests" }],
-          [{ text: "⚙️ Daily Control", callback_data: "admin_daily_control" }],
-          [{ text: "📜 Owner Logs", callback_data: "admin_logs" }]
-        ]
+      $inc: {
+        practiceTests: 1,
+        practiceCorrect: correct,
+        practiceWrong: wrong
       }
     }
   );
-});
 
-/* ===============================================
-   CALLBACK HANDLER — ADMIN
-================================================ */
+  delete activeTests[userId];
+
+  const result =
+`✅ *Practice Session Completed* 🎯
+
+📝 Total Questions: 25
+✔️ Correct: ${correct}
+❌ Wrong: ${wrong}
+⏱️ Time Taken: ${Math.floor(timeTaken/60)} min ${timeTaken%60} sec
+
+📊 Accuracy: ${accuracy}%
+
+💡 Tip:
+Weak concepts revise karo
+Practice repeat karo`;
+
+  await bot.sendMessage(chatId, result, {
+    parse_mode: "Markdown",
+    reply_markup: {
+      inline_keyboard: [
+        [{ text: "🔁 Practice Again", callback_data: "practice" }],
+        [{ text: "🚀 START NOW", callback_data: "main_menu" }]
+      ]
+    }
+  });
+};
+
+/* =================================================
+   ANALYTICS — OWNER SIDE (SAFE)
+================================================= */
 
 bot.on("callback_query", async q => {
-  const id = q.from.id;
-  if (id !== OWNER_ID) return;
+  if (!isOwnerUser(q.from.id)) return;
 
-  /* ---------- ANALYTICS ---------- */
   if (q.data === "admin_analytics") {
     const totalUsers = await User.countDocuments();
     const today = todayDate();
 
     const todayAttempts = await Attempt.countDocuments({ date: today });
-    const avgScoreAgg = await Attempt.aggregate([
+    const avgAgg = await Attempt.aggregate([
       { $match: { date: today } },
       { $group: { _id: null, avg: { $avg: "$score" } } }
     ]);
 
-    const avgScore = avgScoreAgg[0]?.avg?.toFixed(1) || "0.0";
+    const avgScore = avgAgg.length
+      ? avgAgg[0].avg.toFixed(1)
+      : "0";
 
-    await bot.sendMessage(id,
+    const practiceSessions = await User.aggregate([
+      { $group: { _id: null, total: { $sum: "$practiceTests" } } }
+    ]);
+
+    await bot.sendMessage(OWNER_ID,
 `📊 *BOT ANALYTICS*
 
 👥 Total Users: ${totalUsers}
-🧪 Attempts Today: ${todayAttempts}
-⭐ Avg Score Today: ${avgScore} / 25
 
-⏱️ Server: Online
-🗄️ DB: Connected`,
+🧬 Daily Test (Today)
+• Attempts: ${todayAttempts}
+• Avg Score: ${avgScore} / 25
+
+🔁 Practice
+• Total Practice Sessions: ${
+  practiceSessions[0]?.total || 0
+}
+
+⏱️ Status: Bot running smoothly`,
       { parse_mode: "Markdown" }
     );
-
-    notifyOwner("📊 Admin viewed analytics");
   }
+});
+/*************************************************
+ * NEET ASPIRANTS BOT — PART 4
+ * ADMIN VIEW / DELETE / EMERGENCY / MIDNIGHT
+ * OWNER ONLY • BUTTON UI • SAFE ADD-ONLY
+ *************************************************/
 
-  /* ---------- VIEW TESTS ---------- */
-  if (q.data === "admin_view_tests") {
-    const dates = await Question.find({ type: "daily" }).distinct("date");
+/* =================================================
+   OWNER CONTROL ENTRY (BUTTON)
+================================================= */
 
-    if (!dates.length) {
-      return bot.sendMessage(id, "❌ No daily tests found.");
-    }
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
 
-    const buttons = dates.map(d => ([
-      { text: `📅 ${d}`, callback_data: `view_test_${d}` }
-    ]));
+  if (q.data === "admin_manage_tests") {
+    return bot.sendMessage(OWNER_ID,
+`🛠️ *TEST MANAGEMENT*
 
-    await bot.sendMessage(id,
-`📋 *Daily Tests Available*`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: buttons }
-      }
-    );
-  }
-
-  if (q.data.startsWith("view_test_")) {
-    const date = q.data.replace("view_test_", "");
-    const qs = await Question.find({ date, type: "daily" });
-
-    if (!qs.length) {
-      return bot.sendMessage(id, "❌ No test found for this date.");
-    }
-
-    let text = `🧬 *Daily Test — ${date}*\n\n`;
-
-    qs.forEach((q, i) => {
-      text +=
-`Q${i + 1}. ${q.q}
-🅐 ${q.options[0]}
-🅑 ${q.options[1]}
-🅒 ${q.options[2]}
-🅓 ${q.options[3]}
-✅ Ans: ${["A","B","C","D"][q.correct]}
-
-`;
-    });
-
-    await bot.sendMessage(id, text.slice(0, 3900), { parse_mode: "Markdown" });
-    notifyOwner(`📋 Viewed test: ${date}`);
-  }
-
-  /* ---------- DELETE TESTS ---------- */
-  if (q.data === "admin_delete_tests") {
-    const dates = await Question.find({ type: "daily" }).distinct("date");
-
-    if (!dates.length) {
-      return bot.sendMessage(id, "❌ No daily tests to delete.");
-    }
-
-    const buttons = dates.map(d => ([
-      { text: `🗑️ ${d}`, callback_data: `confirm_delete_${d}` }
-    ]));
-
-    await bot.sendMessage(id,
-`⚠️ *Delete Daily Test*`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: { inline_keyboard: buttons }
-      }
-    );
-  }
-
-  if (q.data.startsWith("confirm_delete_")) {
-    const date = q.data.replace("confirm_delete_", "");
-
-    await bot.sendMessage(id,
-`⚠️ Are you sure you want to delete test for *${date}*?`,
+Choose what you want to manage 👇`,
       {
         parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "✅ YES, DELETE", callback_data: `delete_yes_${date}` }],
-            [{ text: "❌ Cancel", callback_data: "admin_panel" }]
+            [{ text: "📋 View Daily Tests", callback_data: "admin_view_daily" }],
+            [{ text: "📋 View Practice Bank", callback_data: "admin_view_practice" }],
+            [{ text: "🗑️ Delete Daily Test", callback_data: "admin_delete_daily" }],
+            [{ text: "🗑️ Delete Practice Data", callback_data: "admin_delete_practice" }],
+            [{ text: "⬅️ Back", callback_data: "owner_panel" }]
           ]
         }
       }
     );
   }
+});
 
-  if (q.data.startsWith("delete_yes_")) {
-    const date = q.data.replace("delete_yes_", "");
+/* =================================================
+   VIEW DAILY TESTS
+================================================= */
 
-    await Question.deleteMany({ date, type: "daily" });
-    await Attempt.deleteMany({ date });
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
 
-    await bot.sendMessage(id, `✅ Test deleted for ${date}`);
-    notifyOwner(`🗑️ Deleted daily test: ${date}`);
+  if (q.data === "admin_view_daily") {
+    const dates = await Question.find({ type: "daily" }).distinct("date");
+
+    return bot.sendMessage(OWNER_ID,
+`📋 *DAILY TESTS*
+
+${dates.length ? dates.join("\n") : "No daily tests uploaded"}`,
+      { parse_mode: "Markdown" }
+    );
+  }
+});
+
+/* =================================================
+   VIEW PRACTICE BANK
+================================================= */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "admin_view_practice") {
+    const total = await Question.countDocuments({ type: "practice" });
+
+    return bot.sendMessage(OWNER_ID,
+`📋 *PRACTICE QUESTION BANK*
+
+🧠 Total Questions: ${total}
+
+📌 Practice system:
+• Random 25 per attempt
+• Unlimited attempts
+• No leaderboard`,
+      { parse_mode: "Markdown" }
+    );
+  }
+});
+
+/* =================================================
+   DELETE DAILY TEST (DATE INPUT)
+================================================= */
+
+const ADMIN_DELETE = {};
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "admin_delete_daily") {
+    ADMIN_DELETE.step = "daily_date";
+    return bot.sendMessage(OWNER_ID,
+`🗑️ *Delete Daily Test*
+
+Send date to delete:
+YYYY-MM-DD`);
+  }
+});
+
+bot.on("message", async msg => {
+  if (!isOwnerUser(msg.from?.id)) return;
+  if (ADMIN_DELETE.step !== "daily_date") return;
+
+  const d = msg.text?.trim();
+  if (!validDate(d)) {
+    return bot.sendMessage(OWNER_ID, "❌ Invalid date format");
   }
 
-  /* ---------- DAILY CONTROL ---------- */
-  if (q.data === "admin_daily_control") {
-    await bot.sendMessage(id,
-`⚙️ *Daily Control*`,
+  const count = await Question.countDocuments({ date: d, type: "daily" });
+  await Question.deleteMany({ date: d, type: "daily" });
+  await Attempt.deleteMany({ date: d });
+
+  ADMIN_DELETE.step = null;
+
+  ownerLog(`Daily test deleted — ${d} (${count} Q)`);
+
+  await bot.sendMessage(OWNER_ID,
+`✅ *Daily Test Deleted*
+
+📅 Date: ${d}
+🧪 Questions removed: ${count}`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+/* =================================================
+   DELETE PRACTICE BANK (FULL)
+================================================= */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "admin_delete_practice") {
+    const total = await Question.countDocuments({ type: "practice" });
+
+    await Question.deleteMany({ type: "practice" });
+
+    ownerLog(`Practice bank cleared (${total} Q)`);
+
+    return bot.sendMessage(OWNER_ID,
+`🗑️ *Practice Bank Cleared*
+
+🧠 Questions deleted: ${total}`,
+      { parse_mode: "Markdown" }
+    );
+  }
+});
+
+/* =================================================
+   EMERGENCY CONTROLS
+================================================= */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "admin_emergency") {
+    return bot.sendMessage(OWNER_ID,
+`⚙️ *EMERGENCY CONTROLS*
+
+Use carefully 👇`,
       {
         parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "🚨 Force New Day", callback_data: "force_new_day_now" }],
-            [{ text: "📢 Notify Users", callback_data: "notify_users" }]
+            [{ text: "🚨 Force New Day", callback_data: "admin_force_new_day" }],
+            [{ text: "📢 Send Test Alert", callback_data: "admin_manual_broadcast" }],
+            [{ text: "⬅️ Back", callback_data: "owner_panel" }]
           ]
         }
       }
     );
   }
+});
 
-  if (q.data === "force_new_day_now") {
+/* =================================================
+   FORCE NEW DAY (MANUAL)
+================================================= */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "admin_force_new_day") {
     const users = await User.find({});
     let sent = 0;
 
@@ -908,21 +1097,212 @@ bot.on("callback_query", async q => {
       } catch {}
     }
 
-    notifyOwner(`🚨 Force new day triggered\n📢 Users notified: ${sent}`);
-    await bot.sendMessage(id, `✅ New day forced\n📢 Notified users: ${sent}`);
-  }
+    ownerLog(`Force new day triggered — ${sent} users notified`);
 
-  /* ---------- OWNER LOG ---------- */
-  if (q.data === "admin_logs") {
-    await bot.sendMessage(id,
-`📜 *OWNER LOG*
+    return bot.sendMessage(OWNER_ID,
+`✅ *New Day Forced*
 
-• Upload / delete
-• Force new day
-• Analytics access
-
-(Logs auto-sent in DM as well)`,
+📢 Notifications sent: ${sent}`,
       { parse_mode: "Markdown" }
     );
   }
+});
+
+/* =================================================
+   MANUAL BROADCAST (OWNER)
+================================================= */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "admin_manual_broadcast") {
+    ADMIN_DELETE.step = "broadcast";
+    return bot.sendMessage(OWNER_ID,
+`📢 *Manual Broadcast*
+
+Send message text now`);
+  }
+});
+
+bot.on("message", async msg => {
+  if (!isOwnerUser(msg.from?.id)) return;
+  if (ADMIN_DELETE.step !== "broadcast") return;
+
+  const users = await User.find({});
+  let sent = 0;
+
+  for (const u of users) {
+    try {
+      await bot.sendMessage(u.user_id, msg.text);
+      sent++;
+    } catch {}
+  }
+
+  ADMIN_DELETE.step = null;
+
+  ownerLog(`Manual broadcast sent to ${sent} users`);
+
+  await bot.sendMessage(OWNER_ID,
+`✅ *Broadcast Completed*
+
+👥 Users reached: ${sent}`,
+    { parse_mode: "Markdown" }
+  );
+});
+
+/* =================================================
+   MIDNIGHT REPORT (AUTO)
+================================================= */
+
+cron.schedule("0 0 * * *", async () => {
+  const today = todayDate();
+  const attempts = await Attempt.countDocuments({ date: today });
+
+  ownerLog(`Midnight report: ${attempts} attempts today`);
+});
+
+
+/*************************************************
+ * NEET ASPIRANTS BOT — PART 5
+ * FINAL OWNER PANEL POLISH
+ * ALL BUTTONS • ZERO TEXT COMMANDS
+ *************************************************/
+
+/* ===============================================
+   OWNER PANEL ENTRY POINT
+================================================ */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "open_owner_panel") {
+    return bot.sendMessage(OWNER_ID,
+`👑 *OWNER CONTROL CENTER*
+
+Manage everything from here 👇`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "📤 Upload & Question Bank", callback_data: "panel_uploads" }],
+            [{ text: "📋 View / Delete Data", callback_data: "admin_manage_tests" }],
+            [{ text: "📊 Analytics & Stats", callback_data: "panel_analytics" }],
+            [{ text: "⚙️ Emergency & Broadcast", callback_data: "admin_emergency" }],
+            [{ text: "📜 Owner Logs", callback_data: "panel_logs" }]
+          ]
+        }
+      }
+    );
+  }
+});
+
+/* ===============================================
+   UPLOAD PANEL
+================================================ */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "panel_uploads") {
+    return bot.sendMessage(OWNER_ID,
+`📤 *UPLOAD & QUESTION BANK*
+
+Choose upload type 👇`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🧬 Upload Daily Test (25 Q)", callback_data: "admin_upload_daily" }],
+            [{ text: "🔁 Upload Practice Questions", callback_data: "admin_upload_practice" }],
+            [{ text: "⬅️ Back", callback_data: "open_owner_panel" }]
+          ]
+        }
+      }
+    );
+  }
+});
+
+/* ===============================================
+   ANALYTICS PANEL
+================================================ */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "panel_analytics") {
+    const totalUsers = await User.countDocuments();
+    const totalAttempts = await Attempt.countDocuments();
+    const totalPractice = await User.aggregate([
+      { $group: { _id: null, total: { $sum: "$practiceTests" } } }
+    ]);
+
+    return bot.sendMessage(OWNER_ID,
+`📊 *BOT ANALYTICS SNAPSHOT*
+
+👥 Total Users: ${totalUsers}
+🧪 Total Daily Attempts: ${totalAttempts}
+🔁 Practice Sessions: ${totalPractice[0]?.total || 0}
+
+📌 Leaderboard + Progress auto tracked`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "⬅️ Back", callback_data: "open_owner_panel" }]
+          ]
+        }
+      }
+    );
+  }
+});
+
+/* ===============================================
+   OWNER LOG VIEW
+================================================ */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  if (q.data === "panel_logs") {
+    const logs =
+      ADMIN.logs.length
+        ? ADMIN.logs.join("\n")
+        : "No recent admin actions";
+
+    return bot.sendMessage(OWNER_ID,
+`📜 *OWNER ACTION LOGS*
+
+${logs}`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "⬅️ Back", callback_data: "open_owner_panel" }]
+          ]
+        }
+      }
+    );
+  }
+});
+
+/* ===============================================
+   OWNER PANEL ENTRY BUTTON
+   (Shown ONLY to OWNER)
+================================================ */
+
+bot.on("callback_query", async q => {
+  if (q.data !== "main_menu") return;
+  if (!isOwnerUser(q.from.id)) return;
+
+  await bot.sendMessage(q.message.chat.id,
+`👑 *OWNER QUICK ACCESS*`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "👑 Open Owner Panel", callback_data: "open_owner_panel" }]
+        ]
+      }
+    }
+  );
 });

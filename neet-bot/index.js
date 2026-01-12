@@ -1,6 +1,6 @@
 /*************************************************
  * NEET ASPIRANTS BOT — PART 1
- * CORE USER ENGINE (FINAL, LOCKED, CALLBACK-SAFE)
+ * CORE USER ENGINE (FINAL, STABLE)
  *************************************************/
 
 require("dotenv").config();
@@ -34,8 +34,10 @@ const User = mongoose.model("User", new mongoose.Schema({
   username: String,
   first_name: String,
   joinedAt: Date,
+
   totalTests: { type: Number, default: 0 },
   totalScore: { type: Number, default: 0 },
+
   practiceTests: { type: Number, default: 0 },
   practiceCorrect: { type: Number, default: 0 },
   practiceWrong: { type: Number, default: 0 }
@@ -43,7 +45,7 @@ const User = mongoose.model("User", new mongoose.Schema({
 
 const Question = mongoose.model("Question", new mongoose.Schema({
   date: String,
-  type: String,
+  type: String, // daily | practice
   q: String,
   options: [String],
   correct: Number,
@@ -85,8 +87,8 @@ async function isJoined(userId) {
 
 /* ================= STATE ================= */
 
-const activeTests = {};
-const joinPending = {};
+const activeTests = {};   // userId → test session
+const joinPending = {};  // userId → pending action
 
 /* ================= /START ================= */
 
@@ -107,7 +109,9 @@ bot.onText(/\/start/, async (msg) => {
 `👋 *Welcome to NEET Aspirants Bot*
 
 Designed for serious NEET Biology students.
-Daily tests • Practice • Progress tracking`,
+Daily tests • Practice • Progress tracking
+
+👇 Select an option to continue`,
     { parse_mode: "Markdown" }
   );
 
@@ -120,6 +124,28 @@ Daily tests • Practice • Progress tracking`,
     }
   });
 });
+
+/* ================= FORCE JOIN ================= */
+
+async function requireJoin(chatId, userId, action) {
+  joinPending[userId] = action;
+
+  await bot.sendMessage(chatId,
+`🔒 *Channel Join Required*
+
+Is bot ke saare features use karne ke liye
+aapko pehle hamara official channel join karna hoga.`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🔔 Join Channel", url: `https://t.me/${CHANNEL_USERNAME.replace("@","")}` }],
+          [{ text: "✅ I have joined", callback_data: "check_join" }]
+        ]
+      }
+    }
+  );
+}
 
 /* ================= LEADERBOARD ================= */
 
@@ -134,47 +160,129 @@ async function showLeaderboard(chatId, date) {
         timeTaken: { $first: "$timeTaken" }
       }
     },
-    { $sort: { score: -1, timeTaken: 1 } },
     { $limit: 10 }
   ]);
 
   let text = `🏆 *Daily Biology Leaderboard*\n📅 ${date}\n\n`;
 
-  if (!rows.length) text += "No attempts yet today.";
-  else {
+  if (!rows.length) {
+    text += "No attempts yet today.\nBe the first 💪";
+  } else {
     rows.forEach((r, i) => {
-      const medal = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i+1}.`;
-      text += `${medal} ${r.score}/25 | ${Math.floor(r.timeTaken/60)}m ${r.timeTaken%60}s\n`;
+      const rank = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i+1}.`;
+      text += `${rank} Score: ${r.score}/25 | ⏱️ ${Math.floor(r.timeTaken/60)}m ${r.timeTaken%60}s\n`;
     });
   }
 
   await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
 }
 
-/* ================= OWNER CALLBACK HOOK ================= */
-/* PART-2 yahin se handle hoga */
+/* ================= TIMER ================= */
 
-async function handleOwnerCallbacks(q) {
-  if (!isOwnerUser(q.from.id)) return false;
-
-  // 👉 PART-2 ka pura callback code yahin aayega
-  // example:
-  // if (q.data === "UPLOAD_BANK") { ... }
-
-  return false; // agar handle nahi hua
+function remainingTime(t) {
+  const total = 25 * 60;
+  const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
+  const left = Math.max(total - elapsed, 0);
+  return {
+    min: Math.floor(left / 60),
+    sec: left % 60
+  };
 }
 
-/* ================= SINGLE CALLBACK ROUTER ================= */
+/* ================= START TEST ================= */
+
+async function startTest(chatId, userId, type) {
+  if (!(await isJoined(userId))) return requireJoin(chatId, userId, type);
+
+  const date = todayDate();
+
+  if (type === "daily" && !isOwnerUser(userId)) {
+    const done = await Attempt.findOne({ user_id: userId, date });
+    if (done) {
+      return bot.sendMessage(chatId,
+        "❌ You already attempted today’s test\nCome back tomorrow 💪"
+      );
+    }
+  }
+
+  const qs = await Question.find({ date, type });
+  if (!qs.length) {
+    return bot.sendMessage(chatId,
+      "⏳ Test not available yet.\nTry again later 💪"
+    );
+  }
+
+  activeTests[userId] = {
+    type,
+    date,
+    questions: qs.sort(() => Math.random() - 0.5).slice(0, 25),
+    index: 0,
+    score: 0,
+    answered: false,
+    startTime: null
+  };
+
+  await bot.sendMessage(chatId,
+`🧬 *${type === "daily" ? "Daily Biology Test" : "Practice Biology"}*
+
+📝 Total Questions: 25
+⏱️ Time Limit: 25 Minutes`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "▶️ Start", callback_data: "start_now" }],
+          [{ text: "❌ Cancel", callback_data: "main_menu" }]
+        ]
+      }
+    }
+  );
+}
+
+/* ================= SEND QUESTION ================= */
+
+function sendQuestion(chatId, userId) {
+  const t = activeTests[userId];
+  if (!t) return;
+
+  const q = t.questions[t.index];
+  const time = remainingTime(t);
+  t.answered = false;
+
+  bot.sendMessage(chatId,
+`🧬 *Question ${t.index + 1} / 25*
+⏱️ ${time.min}m ${time.sec}s
+
+${q.q}
+
+🅐 ${q.options[0]}   🅑 ${q.options[1]}
+🅒 ${q.options[2]}   🅓 ${q.options[3]}`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🅐", callback_data: "ans_0" }, { text: "🅑", callback_data: "ans_1" }],
+          [{ text: "🅒", callback_data: "ans_2" }, { text: "🅓", callback_data: "ans_3" }]
+        ]
+      }
+    }
+  );
+}
+
+/* ================= CALLBACK ROUTER ================= */
 
 bot.on("callback_query", async (q) => {
   const chatId = q.message.chat.id;
   const userId = q.from.id;
 
-  /* OWNER FIRST */
-  const ownerHandled = await handleOwnerCallbacks(q);
-  if (ownerHandled) return;
+  /* 🔑 OWNER CALLBACK HOOK (PART-2) */
+  if (typeof handleOwnerCallbacks === "function" && isOwnerUser(userId)) {
+    const handled = await handleOwnerCallbacks(q.data, chatId, userId);
+    if (handled) return;
+  }
 
-  /* USER MENU */
+  const t = activeTests[userId];
+
   if (q.data === "main_menu") {
     return bot.sendMessage(chatId, "🔥 Let’s improve your NEET score", {
       reply_markup: {
@@ -188,18 +296,122 @@ bot.on("callback_query", async (q) => {
     });
   }
 
-  // बाकी user logic unchanged रहेगा
+  if (q.data === "daily") return startTest(chatId, userId, "daily");
+  if (q.data === "practice") return startTest(chatId, userId, "practice");
+
+  if (q.data === "start_now" && t) {
+    t.startTime = Date.now();
+    sendQuestion(chatId, userId);
+    setTimeout(() => {
+      if (activeTests[userId]) finishTest(chatId, userId, true);
+    }, 25 * 60 * 1000);
+    return;
+  }
+
+  if (q.data.startsWith("ans_") && t && !t.answered) {
+    t.answered = true;
+    const sel = Number(q.data.split("_")[1]);
+    const cq = t.questions[t.index];
+    if (sel === cq.correct) t.score++;
+
+    return bot.sendMessage(chatId,
+      sel === cq.correct
+        ? `✅ Correct!\n\n✔️ ${cq.reason}`
+        : `❌ Wrong!\n\n✅ Correct: ${["🅐","🅑","🅒","🅓"][cq.correct]}\n✔️ ${cq.reason}`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: [[{ text: "➡️ Next", callback_data: "next" }]]
+      }
+    );
+  }
+
+  if (q.data === "next" && t) {
+    t.index++;
+    if (t.index >= t.questions.length) return finishTest(chatId, userId, false);
+    return sendQuestion(chatId, userId);
+  }
+
+  if (q.data === "progress") return showProgress(chatId, userId);
+
+  if (q.data === "check_join") {
+    if (await isJoined(userId)) {
+      const next = joinPending[userId];
+      delete joinPending[userId];
+      if (next) startTest(chatId, userId, next);
+    }
+  }
 });
+
+/* ================= FINISH TEST ================= */
+
+async function finishTest(chatId, userId, timeOver) {
+  const t = activeTests[userId];
+  if (!t) return;
+
+  const timeTaken = Math.floor((Date.now() - t.startTime) / 1000);
+
+  if (t.type === "daily" && !isOwnerUser(userId)) {
+    await Attempt.create({ user_id: userId, date: t.date, score: t.score, timeTaken });
+    await User.updateOne(
+      { user_id: userId },
+      { $inc: { totalTests: 1, totalScore: t.score } }
+    );
+  }
+
+  if (t.type === "practice") {
+    await User.updateOne(
+      { user_id: userId },
+      { $inc: { practiceTests: 1, practiceCorrect: t.score, practiceWrong: 25 - t.score } }
+    );
+  }
+
+  delete activeTests[userId];
+
+  await bot.sendMessage(chatId,
+    timeOver
+      ? `⏰ *Time Over!*\n⭐ Score: ${t.score}/25`
+      : `✅ *Test Completed*\n⭐ Score: ${t.score}/25\n⏱️ ${Math.floor(timeTaken/60)}m ${timeTaken%60}s`,
+    { parse_mode: "Markdown" }
+  );
+
+  if (t.type === "daily") {
+    await showLeaderboard(chatId, t.date);
+    await bot.sendMessage(chatId, "🚀 START NOW", {
+      reply_markup: [[{ text: "🚀 START NOW", callback_data: "main_menu" }]]
+    });
+  }
+}
+
+/* ================= PROGRESS ================= */
+
+async function showProgress(chatId, userId) {
+  const u = await User.findOne({ user_id: userId });
+  if (!u) return;
+
+  const avg = u.totalTests ? (u.totalScore / u.totalTests).toFixed(1) : "0";
+
+  await bot.sendMessage(chatId,
+`📊 *My Progress Snapshot*
+
+🧬 Daily Tests
+• Attempts: ${u.totalTests}
+• Avg Score: ${avg} / 25
+
+🔁 Practice
+• Sessions: ${u.practiceTests}`,
+    { parse_mode: "Markdown" }
+  );
+}
 /*************************************************
- * NEET ASPIRANTS BOT — PART 2 (FINAL)
+ * NEET ASPIRANTS BOT — PART 2
  * OWNER UPLOAD + /DONE + STRONG PARSER
- * SAFE MODULE — NO CALLBACK LISTENER
+ * SAFE MODULE (NO EXTRA CALLBACK LISTENER)
  *************************************************/
 
-/* ============== OWNER STATE ============== */
+/* ================= OWNER STATE ================= */
 
 const ADMIN = {
-  uploads: {},   // userId -> { type, step, date, buffer }
+  uploads: {},   // ownerId -> { type, step, date, buffer }
   logs: []
 };
 
@@ -213,9 +425,9 @@ function validDate(d) {
   return /^\d{4}-\d{2}-\d{2}$/.test(d);
 }
 
-/* ============== STRONG QUESTION PARSER ============== */
+/* ================= STRONG QUESTION PARSER ================= */
 /*
-FORMAT:
+SUPPORTED FORMAT (COPY-PASTE FRIENDLY):
 
 Q1. Question text
 A) option
@@ -254,35 +466,18 @@ function parseQuestions(raw) {
 }
 
 /* =====================================================
-   OWNER CALLBACK HANDLER (CALLED FROM PART-1)
+   OWNER CALLBACK HANDLER
+   (CALLED FROM PART-1 CALLBACK ROUTER)
 ===================================================== */
 
 async function handleOwnerCallbacks(data, chatId, userId) {
-  if (!isOwnerUser(userId)) return;
+  if (!isOwnerUser(userId)) return false;
 
   const session = ADMIN.uploads[userId];
 
-  /* ---------- UPLOAD BANK MENU ---------- */
-  if (data === "UPLOAD_BANK") {
-    return bot.sendMessage(chatId,
-`📤 UPLOAD & QUESTION BANK
-
-Choose upload type 👇`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "🧬 Upload Daily Test", callback_data: "ADMIN_DAILY" }],
-            [{ text: "🔁 Upload Practice Bank", callback_data: "ADMIN_PRACTICE" }],
-            [{ text: "⬅️ Back", callback_data: "OWNER_BACK" }]
-          ]
-        }
-      }
-    );
-  }
-
-  /* ---------- BACK ---------- */
-  if (data === "OWNER_BACK") {
-    return bot.sendMessage(chatId,
+  /* ===== OWNER PANEL ENTRY ===== */
+  if (data === "OWNER_PANEL") {
+    await bot.sendMessage(chatId,
 `👑 OWNER CONTROL PANEL
 
 Choose an action 👇`,
@@ -295,12 +490,33 @@ Choose an action 👇`,
         }
       }
     );
+    return true;
   }
 
-  /* ---------- START DAILY UPLOAD ---------- */
+  /* ===== UPLOAD BANK MENU ===== */
+  if (data === "UPLOAD_BANK") {
+    await bot.sendMessage(chatId,
+`📤 UPLOAD & QUESTION BANK
+
+Choose upload type 👇`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🧬 Upload Daily Test", callback_data: "ADMIN_DAILY" }],
+            [{ text: "🔁 Upload Practice Bank", callback_data: "ADMIN_PRACTICE" }],
+            [{ text: "⬅️ Back", callback_data: "OWNER_PANEL" }]
+          ]
+        }
+      }
+    );
+    return true;
+  }
+
+  /* ===== START DAILY UPLOAD ===== */
   if (data === "ADMIN_DAILY") {
     if (session) {
-      return bot.sendMessage(chatId, "⚠️ Finish current upload first (/done)");
+      await bot.sendMessage(chatId, "⚠️ Finish current upload first using /done");
+      return true;
     }
 
     ADMIN.uploads[userId] = {
@@ -312,17 +528,19 @@ Choose an action 👇`,
 
     ownerLog("Started DAILY upload");
 
-    return bot.sendMessage(chatId,
+    await bot.sendMessage(chatId,
 `📅 DAILY TEST UPLOAD
 
-Send date:
+Send date in format:
 YYYY-MM-DD`);
+    return true;
   }
 
-  /* ---------- START PRACTICE UPLOAD ---------- */
+  /* ===== START PRACTICE UPLOAD ===== */
   if (data === "ADMIN_PRACTICE") {
     if (session) {
-      return bot.sendMessage(chatId, "⚠️ Finish current upload first (/done)");
+      await bot.sendMessage(chatId, "⚠️ Finish current upload first using /done");
+      return true;
     }
 
     ADMIN.uploads[userId] = {
@@ -334,42 +552,25 @@ YYYY-MM-DD`);
 
     ownerLog("Started PRACTICE upload");
 
-    return bot.sendMessage(chatId,
+    await bot.sendMessage(chatId,
 `📅 PRACTICE BANK UPLOAD
 
-Send date:
+Send date (grouping only):
 YYYY-MM-DD`);
+    return true;
   }
 
-  /* ---------- OVERWRITE CONFIRM ---------- */
-  if (data === "ADMIN_OVERWRITE_YES") {
-    if (!session) return;
-
-    await Question.deleteMany({ date: session.date, type: session.type });
-    session.step = "questions";
-
-    ownerLog(`Overwrite confirmed: ${session.type} ${session.date}`);
-
-    return bot.sendMessage(chatId,
-`📝 Old data deleted.
-Paste questions now.
-Send /done when finished`);
-  }
-
-  if (data === "ADMIN_OVERWRITE_NO") {
-    delete ADMIN.uploads[userId];
-    ownerLog("Upload cancelled");
-    return bot.sendMessage(chatId, "❌ Upload cancelled");
-  }
-
-  /* ---------- OWNER LOGS ---------- */
+  /* ===== OWNER LOGS ===== */
   if (data === "ADMIN_LOGS") {
     const logs = ADMIN.logs.length ? ADMIN.logs.join("\n") : "No logs yet";
-    return bot.sendMessage(chatId,
+    await bot.sendMessage(chatId,
 `📜 OWNER LOGS
 
 ${logs}`);
+    return true;
   }
+
+  return false; // not handled
 }
 
 /* ================= OWNER MESSAGE FLOW ================= */
@@ -380,7 +581,7 @@ bot.on("message", async msg => {
   const session = ADMIN.uploads[msg.from.id];
   if (!session) return;
 
-  /* ---------- DATE STEP ---------- */
+  /* ---- DATE STEP ---- */
   if (session.step === "date") {
     const d = msg.text?.trim();
     if (!validDate(d)) {
@@ -410,18 +611,44 @@ Overwrite existing questions?`,
     session.step = "questions";
     return bot.sendMessage(msg.chat.id,
 `📝 Paste all questions now
-(multiple messages allowed)
+(you can send multiple messages)
 
 Send /done when finished`);
   }
 
-  /* ---------- QUESTIONS STEP ---------- */
+  /* ---- QUESTIONS STEP ---- */
   if (session.step === "questions" && msg.text && !msg.text.startsWith("/")) {
     session.buffer += "\n\n" + msg.text;
     const count = parseQuestions(session.buffer).length;
 
     return bot.sendMessage(msg.chat.id,
 `📝 Detected questions so far: ${count}`);
+  }
+});
+
+/* ================= OVERWRITE CALLBACKS ================= */
+
+bot.on("callback_query", async q => {
+  if (!isOwnerUser(q.from.id)) return;
+
+  const session = ADMIN.uploads[q.from.id];
+  if (!session) return;
+
+  if (q.data === "ADMIN_OVERWRITE_NO") {
+    delete ADMIN.uploads[q.from.id];
+    ownerLog("Upload cancelled");
+    return bot.sendMessage(q.message.chat.id, "❌ Upload cancelled");
+  }
+
+  if (q.data === "ADMIN_OVERWRITE_YES") {
+    await Question.deleteMany({ date: session.date, type: session.type });
+    session.step = "questions";
+    ownerLog(`Overwrite confirmed: ${session.type} ${session.date}`);
+
+    return bot.sendMessage(q.message.chat.id,
+`📝 Old data deleted.
+Paste questions now
+Send /done when finished`);
   }
 });
 
@@ -453,7 +680,9 @@ Detected: ${parsed.length}`);
     type: session.type
   })));
 
-  ownerLog(`${session.type.toUpperCase()} uploaded — ${session.date} (${parsed.length} Q)`);
+  ownerLog(
+    `${session.type.toUpperCase()} uploaded — ${session.date} (${parsed.length} Q)`
+  );
 
   await bot.sendMessage(msg.chat.id,
 `✅ Upload successful

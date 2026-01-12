@@ -455,7 +455,6 @@ const ADMIN = {
   logs: []         // owner action logs
 };
 
-function isOwnerUser(id) {
   return id === OWNER_ID;
 }
 

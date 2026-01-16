@@ -268,7 +268,6 @@ ${q.q}
     }
   );
 }
-
 /* ================= CALLBACK ROUTER ================= */
 
 bot.on("callback_query", async (q) => {
@@ -278,11 +277,12 @@ bot.on("callback_query", async (q) => {
   /* 🔑 OWNER CALLBACK HOOK (PART-2) */
   if (typeof handleOwnerCallbacks === "function" && isOwnerUser(userId)) {
     const handled = await handleOwnerCallbacks(q.data, chatId, userId);
-    if (handled) return;
+    if (handled !== undefined) return; // ✅ CRITICAL FIX
   }
 
   const t = activeTests[userId];
 
+  /* ===== MAIN MENU ===== */
   if (q.data === "main_menu") {
     return bot.sendMessage(chatId, "🔥 Let’s improve your NEET score", {
       reply_markup: {
@@ -296,43 +296,62 @@ bot.on("callback_query", async (q) => {
     });
   }
 
+  /* ===== START TEST ===== */
   if (q.data === "daily") return startTest(chatId, userId, "daily");
   if (q.data === "practice") return startTest(chatId, userId, "practice");
 
+  /* ===== START NOW ===== */
   if (q.data === "start_now" && t) {
     t.startTime = Date.now();
     sendQuestion(chatId, userId);
+
     setTimeout(() => {
       if (activeTests[userId]) finishTest(chatId, userId, true);
     }, 25 * 60 * 1000);
+
     return;
   }
 
+  /* ===== ANSWER ===== */
   if (q.data.startsWith("ans_") && t && !t.answered) {
     t.answered = true;
+
     const sel = Number(q.data.split("_")[1]);
     const cq = t.questions[t.index];
-    if (sel === cq.correct) t.score++;
+    const correct = sel === cq.correct;
+    if (correct) t.score++;
 
-    return bot.sendMessage(chatId,
-      sel === cq.correct
+    return bot.sendMessage(
+      chatId,
+      correct
         ? `✅ Correct!\n\n✔️ ${cq.reason}`
         : `❌ Wrong!\n\n✅ Correct: ${["🅐","🅑","🅒","🅓"][cq.correct]}\n✔️ ${cq.reason}`,
       {
         parse_mode: "Markdown",
-        reply_markup: [[{ text: "➡️ Next", callback_data: "next" }]]
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "➡️ Next", callback_data: "next" }]
+          ]
+        }
       }
     );
   }
 
+  /* ===== NEXT QUESTION ===== */
   if (q.data === "next" && t) {
     t.index++;
-    if (t.index >= t.questions.length) return finishTest(chatId, userId, false);
+    if (t.index >= t.questions.length) {
+      return finishTest(chatId, userId, false);
+    }
     return sendQuestion(chatId, userId);
   }
 
-  if (q.data === "progress") return showProgress(chatId, userId);
+  /* ===== PROGRESS ===== */
+  if (q.data === "progress") {
+    return showProgress(chatId, userId);
+  }
 
+  /* ===== FORCE JOIN CHECK ===== */
   if (q.data === "check_join") {
     if (await isJoined(userId)) {
       const next = joinPending[userId];
@@ -341,7 +360,6 @@ bot.on("callback_query", async (q) => {
     }
   }
 });
-
 /* ================= FINISH TEST ================= */
 
 async function finishTest(chatId, userId, timeOver) {

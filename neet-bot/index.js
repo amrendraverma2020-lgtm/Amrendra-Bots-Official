@@ -1072,19 +1072,24 @@ bot.on("message", async msg => {
     { parse_mode: "Markdown" }
   );
 });
-
 /* =================================================
    MIDNIGHT REPORT (AUTO)
 ================================================= */
 
-  ...
-});cron.schedule("0 0 * * *", async () => {
-  const today = todayDate();
-  const attempts = await Attempt.countDocuments({ date: today });
+// ⚠️ Ensure this line exists ONCE at top of file
+// const cron = require("node-cron");
 
-  ownerLog(`Midnight report: ${attempts} attempts today`);
+cron.schedule("0 0 * * *", async () => {
+  try {
+    const today = todayDate();
+
+    const attempts = await Attempt.countDocuments({ date: today });
+
+    ownerLog(`🌙 Midnight report: ${attempts} daily attempts today`);
+  } catch (err) {
+    console.error("❌ Midnight cron error:", err);
+  }
 });
-
 
 /*************************************************
  * NEET ASPIRANTS BOT — PART 5

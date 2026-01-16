@@ -482,7 +482,6 @@ function parseQuestions(raw) {
 
   return out;
 }
-
 /* =====================================================
    OWNER CALLBACK HANDLER
    (CALLED FROM PART-1 CALLBACK ROUTER)
@@ -571,7 +570,7 @@ YYYY-MM-DD`);
     ownerLog("Started PRACTICE upload");
 
     await bot.sendMessage(chatId,
-`📅 PRACTICE BANK UPLOAD
+`📅 PRACTICE QUESTION BANK
 
 Send date (grouping only):
 YYYY-MM-DD`);
@@ -580,7 +579,10 @@ YYYY-MM-DD`);
 
   /* ===== OWNER LOGS ===== */
   if (data === "ADMIN_LOGS") {
-    const logs = ADMIN.logs.length ? ADMIN.logs.join("\n") : "No logs yet";
+    const logs = ADMIN.logs.length
+      ? ADMIN.logs.join("\n")
+      : "No logs yet";
+
     await bot.sendMessage(chatId,
 `📜 OWNER LOGS
 
@@ -588,9 +590,8 @@ ${logs}`);
     return true;
   }
 
-  return false; // not handled
+  return false; // 👈 very important
 }
-
 /* ================= OWNER MESSAGE FLOW ================= */
 
 bot.on("message", async msg => {

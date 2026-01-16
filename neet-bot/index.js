@@ -4,7 +4,7 @@
  *************************************************/
 
 require("dotenv").config();
-
+const cron = require("node-cron");
 const TelegramBot = require("node-telegram-bot-api");
 const express = require("express");
 const mongoose = require("mongoose");
@@ -1077,7 +1077,8 @@ bot.on("message", async msg => {
    MIDNIGHT REPORT (AUTO)
 ================================================= */
 
-cron.schedule("0 0 * * *", async () => {
+  ...
+});cron.schedule("0 0 * * *", async () => {
   const today = todayDate();
   const attempts = await Attempt.countDocuments({ date: today });
 

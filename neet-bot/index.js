@@ -4,7 +4,6 @@
  *************************************************/
 
 require("dotenv").config();
-const cron = require("node-cron");
 const TelegramBot = require("node-telegram-bot-api");
 const express = require("express");
 const mongoose = require("mongoose");
@@ -87,8 +86,8 @@ async function isJoined(userId) {
 
 /* ================= STATE ================= */
 
-const activeTests = {};   // userId → test session
-const joinPending = {};  // userId → pending action
+const activeTests = {};   // userId -> test session
+const joinPending = {};  // userId -> pending action
 
 /* ================= /START ================= */
 
@@ -120,32 +119,12 @@ Daily tests • Practice • Progress tracking
   await bot.sendMessage(chatId, "🚀 *START NOW*", {
     parse_mode: "Markdown",
     reply_markup: {
-      inline_keyboard: [[{ text: "🚀 START NOW", callback_data: "main_menu" }]]
+      inline_keyboard: [
+        [{ text: "🚀 START NOW", callback_data: "main_menu" }]
+      ]
     }
   });
 });
-
-/* ================= FORCE JOIN ================= */
-
-async function requireJoin(chatId, userId, action) {
-  joinPending[userId] = action;
-
-  await bot.sendMessage(chatId,
-`🔒 *Channel Join Required*
-
-Is bot ke saare features use karne ke liye
-aapko pehle hamara official channel join karna hoga.`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "🔔 Join Channel", url: `https://t.me/${CHANNEL_USERNAME.replace("@","")}` }],
-          [{ text: "✅ I have joined", callback_data: "check_join" }]
-        ]
-      }
-    }
-  );
-}
 
 /* ================= LEADERBOARD ================= */
 
@@ -169,261 +148,53 @@ async function showLeaderboard(chatId, date) {
     text += "No attempts yet today.\nBe the first 💪";
   } else {
     rows.forEach((r, i) => {
-      const rank = i === 0 ? "🥇" : i === 1 ? "🥈" : i === 2 ? "🥉" : `${i+1}.`;
-      text += `${rank} Score: ${r.score}/25 | ⏱️ ${Math.floor(r.timeTaken/60)}m ${r.timeTaken%60}s\n`;
+      const rank =
+        i === 0 ? "🥇" :
+        i === 1 ? "🥈" :
+        i === 2 ? "🥉" :
+        `${i + 1}.`;
+
+      text += `${rank} Score: ${r.score}/25 | ⏱️ ${Math.floor(r.timeTaken / 60)}m ${r.timeTaken % 60}s\n`;
     });
   }
 
   await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
 }
 
-/* ================= TIMER ================= */
-
-function remainingTime(t) {
-  const total = 25 * 60;
-  const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
-  const left = Math.max(total - elapsed, 0);
-  return {
-    min: Math.floor(left / 60),
-    sec: left % 60
-  };
-}
-
-/* ================= START TEST ================= */
-
-async function startTest(chatId, userId, type) {
-  if (!(await isJoined(userId))) return requireJoin(chatId, userId, type);
-
-  const date = todayDate();
-
-  if (type === "daily" && !isOwnerUser(userId)) {
-    const done = await Attempt.findOne({ user_id: userId, date });
-    if (done) {
-      return bot.sendMessage(chatId,
-        "❌ You already attempted today’s test\nCome back tomorrow 💪"
-      );
-    }
-  }
-
-  const qs = await Question.find({ date, type });
-  if (!qs.length) {
-    return bot.sendMessage(chatId,
-      "⏳ Test not available yet.\nTry again later 💪"
-    );
-  }
-
-  activeTests[userId] = {
-    type,
-    date,
-    questions: qs.sort(() => Math.random() - 0.5).slice(0, 25),
-    index: 0,
-    score: 0,
-    answered: false,
-    startTime: null
-  };
-
-  await bot.sendMessage(chatId,
-`🧬 *${type === "daily" ? "Daily Biology Test" : "Practice Biology"}*
-
-📝 Total Questions: 25
-⏱️ Time Limit: 25 Minutes`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "▶️ Start", callback_data: "start_now" }],
-          [{ text: "❌ Cancel", callback_data: "main_menu" }]
-        ]
-      }
-    }
-  );
-}
-
-/* ================= SEND QUESTION ================= */
-
-function sendQuestion(chatId, userId) {
-  const t = activeTests[userId];
-  if (!t) return;
-
-  const q = t.questions[t.index];
-  const time = remainingTime(t);
-  t.answered = false;
-
-  bot.sendMessage(chatId,
-`🧬 *Question ${t.index + 1} / 25*
-⏱️ ${time.min}m ${time.sec}s
-
-${q.q}
-
-🅐 ${q.options[0]}   🅑 ${q.options[1]}
-🅒 ${q.options[2]}   🅓 ${q.options[3]}`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "🅐", callback_data: "ans_0" }, { text: "🅑", callback_data: "ans_1" }],
-          [{ text: "🅒", callback_data: "ans_2" }, { text: "🅓", callback_data: "ans_3" }]
-        ]
-      }
-    }
-  );
-}
-/* ================= CALLBACK ROUTER ================= */
+/* ================= CALLBACK ROUTER (SINGLE) ================= */
 
 bot.on("callback_query", async (q) => {
   const chatId = q.message.chat.id;
   const userId = q.from.id;
 
-  /* 🔑 OWNER CALLBACK HOOK (PART-2) */
+  /* 🔑 OWNER CALLBACK HOOK (PART-2 YAHIN AAYEGA) */
   if (typeof handleOwnerCallbacks === "function" && isOwnerUser(userId)) {
     const handled = await handleOwnerCallbacks(q.data, chatId, userId);
-    if (handled !== undefined) return; // ✅ CRITICAL FIX
+    if (handled === true) return;
   }
-
-  const t = activeTests[userId];
 
   /* ===== MAIN MENU ===== */
   if (q.data === "main_menu") {
-    return bot.sendMessage(chatId, "🔥 Let’s improve your NEET score", {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "🧬 Take Today’s Test", callback_data: "daily" }],
-          [{ text: "🔁 Practice Biology", callback_data: "practice" }],
-          [{ text: "📊 My Progress", callback_data: "progress" }],
-          [{ text: "☎️ Contact Owner", url: SUPPORT_BOT_URL }]
-        ]
-      }
-    });
-  }
-
-  /* ===== START TEST ===== */
-  if (q.data === "daily") return startTest(chatId, userId, "daily");
-  if (q.data === "practice") return startTest(chatId, userId, "practice");
-
-  /* ===== START NOW ===== */
-  if (q.data === "start_now" && t) {
-    t.startTime = Date.now();
-    sendQuestion(chatId, userId);
-
-    setTimeout(() => {
-      if (activeTests[userId]) finishTest(chatId, userId, true);
-    }, 25 * 60 * 1000);
-
-    return;
-  }
-
-  /* ===== ANSWER ===== */
-  if (q.data.startsWith("ans_") && t && !t.answered) {
-    t.answered = true;
-
-    const sel = Number(q.data.split("_")[1]);
-    const cq = t.questions[t.index];
-    const correct = sel === cq.correct;
-    if (correct) t.score++;
-
-    return bot.sendMessage(
-      chatId,
-      correct
-        ? `✅ Correct!\n\n✔️ ${cq.reason}`
-        : `❌ Wrong!\n\n✅ Correct: ${["🅐","🅑","🅒","🅓"][cq.correct]}\n✔️ ${cq.reason}`,
+    return bot.sendMessage(chatId,
+`🔥 Let’s improve your NEET score`,
       {
-        parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "➡️ Next", callback_data: "next" }]
+            [{ text: "🧬 Take Today’s Test", callback_data: "daily" }],
+            [{ text: "🔁 Practice Biology", callback_data: "practice" }],
+            [{ text: "📊 My Progress", callback_data: "progress" }],
+            [{ text: "☎️ Contact Owner", url: SUPPORT_BOT_URL }]
           ]
         }
       }
     );
   }
-
-  /* ===== NEXT QUESTION ===== */
-  if (q.data === "next" && t) {
-    t.index++;
-    if (t.index >= t.questions.length) {
-      return finishTest(chatId, userId, false);
-    }
-    return sendQuestion(chatId, userId);
-  }
-
-  /* ===== PROGRESS ===== */
-  if (q.data === "progress") {
-    return showProgress(chatId, userId);
-  }
-
-  /* ===== FORCE JOIN CHECK ===== */
-  if (q.data === "check_join") {
-    if (await isJoined(userId)) {
-      const next = joinPending[userId];
-      delete joinPending[userId];
-      if (next) startTest(chatId, userId, next);
-    }
-  }
 });
-/* ================= FINISH TEST ================= */
 
-async function finishTest(chatId, userId, timeOver) {
-  const t = activeTests[userId];
-  if (!t) return;
-
-  const timeTaken = Math.floor((Date.now() - t.startTime) / 1000);
-
-  if (t.type === "daily" && !isOwnerUser(userId)) {
-    await Attempt.create({ user_id: userId, date: t.date, score: t.score, timeTaken });
-    await User.updateOne(
-      { user_id: userId },
-      { $inc: { totalTests: 1, totalScore: t.score } }
-    );
-  }
-
-  if (t.type === "practice") {
-    await User.updateOne(
-      { user_id: userId },
-      { $inc: { practiceTests: 1, practiceCorrect: t.score, practiceWrong: 25 - t.score } }
-    );
-  }
-
-  delete activeTests[userId];
-
-  await bot.sendMessage(chatId,
-    timeOver
-      ? `⏰ *Time Over!*\n⭐ Score: ${t.score}/25`
-      : `✅ *Test Completed*\n⭐ Score: ${t.score}/25\n⏱️ ${Math.floor(timeTaken/60)}m ${timeTaken%60}s`,
-    { parse_mode: "Markdown" }
-  );
-
-  if (t.type === "daily") {
-    await showLeaderboard(chatId, t.date);
-    await bot.sendMessage(chatId, "🚀 START NOW", {
-      reply_markup: [[{ text: "🚀 START NOW", callback_data: "main_menu" }]]
-    });
-  }
-}
-
-/* ================= PROGRESS ================= */
-
-async function showProgress(chatId, userId) {
-  const u = await User.findOne({ user_id: userId });
-  if (!u) return;
-
-  const avg = u.totalTests ? (u.totalScore / u.totalTests).toFixed(1) : "0";
-
-  await bot.sendMessage(chatId,
-`📊 *My Progress Snapshot*
-
-🧬 Daily Tests
-• Attempts: ${u.totalTests}
-• Avg Score: ${avg} / 25
-
-🔁 Practice
-• Sessions: ${u.practiceTests}`,
-    { parse_mode: "Markdown" }
-  );
-}
 /*************************************************
- * NEET ASPIRANTS BOT — PART 2 (FINAL FIXED)
- * OWNER UPLOAD + /DONE + STRONG PARSER
- * SINGLE CALLBACK FLOW (NO DUPLICATES)
+ * NEET ASPIRANTS BOT — PART 2
+ * OWNER UPLOAD ENGINE (FINAL, SAFE)
+ * NO EXTRA CALLBACK ROUTER
  *************************************************/
 
 /* ================= OWNER STATE ================= */
@@ -443,7 +214,7 @@ function validDate(d) {
   return /^\d{4}-\d{2}-\d{2}$/.test(d);
 }
 
-/* ================= STRONG QUESTION PARSER ================= */
+/* ================= QUESTION PARSER ================= */
 
 function parseQuestions(raw) {
   const blocks = raw
@@ -473,11 +244,12 @@ function parseQuestions(raw) {
 }
 
 /* =====================================================
-   OWNER CALLBACK HANDLER (ONLY PLACE FOR OWNER BUTTONS)
+   OWNER CALLBACK HANDLER
+   (CALLED FROM PART-1 CALLBACK ROUTER)
 ===================================================== */
 
 async function handleOwnerCallbacks(data, chatId, userId) {
-  if (!isOwnerUser(userId)) return false;
+  if (!isOwnerUser(userId)) return undefined;
 
   const session = ADMIN.uploads[userId];
 
@@ -536,7 +308,9 @@ Choose upload type 👇`,
 
     await bot.sendMessage(chatId,
 `📅 DAILY TEST UPLOAD
-Send date (YYYY-MM-DD)`);
+
+Send date:
+YYYY-MM-DD`);
     return true;
   }
 
@@ -557,8 +331,10 @@ Send date (YYYY-MM-DD)`);
     ownerLog("Started PRACTICE upload");
 
     await bot.sendMessage(chatId,
-`📅 PRACTICE BANK UPLOAD
-Send date (YYYY-MM-DD)`);
+`📅 PRACTICE QUESTION BANK
+
+Send date (grouping only):
+YYYY-MM-DD`);
     return true;
   }
 
@@ -575,6 +351,7 @@ Send date (YYYY-MM-DD)`);
 `📝 Old data deleted.
 Paste questions now
 Send /done when finished`);
+
     return true;
   }
 
@@ -594,7 +371,7 @@ Send /done when finished`);
     return true;
   }
 
-  return false;
+  return undefined;
 }
 
 /* ================= OWNER MESSAGE FLOW ================= */
@@ -605,6 +382,7 @@ bot.on("message", async msg => {
   const session = ADMIN.uploads[msg.from.id];
   if (!session) return;
 
+  /* ---- DATE STEP ---- */
   if (session.step === "date") {
     const d = msg.text?.trim();
     if (!validDate(d)) {
@@ -618,6 +396,7 @@ bot.on("message", async msg => {
       session.step = "confirm";
       return bot.sendMessage(msg.chat.id,
 `⚠️ ${session.type.toUpperCase()} already exists for ${d}
+
 Overwrite existing questions?`,
         {
           reply_markup: {
@@ -633,13 +412,18 @@ Overwrite existing questions?`,
     session.step = "questions";
     return bot.sendMessage(msg.chat.id,
 `📝 Paste all questions now
+(you can send multiple messages)
+
 Send /done when finished`);
   }
 
+  /* ---- QUESTIONS STEP ---- */
   if (session.step === "questions" && msg.text && !msg.text.startsWith("/")) {
     session.buffer += "\n\n" + msg.text;
     const count = parseQuestions(session.buffer).length;
-    return bot.sendMessage(msg.chat.id, `📝 Detected questions so far: ${count}`);
+
+    return bot.sendMessage(msg.chat.id,
+`📝 Detected questions so far: ${count}`);
   }
 });
 
@@ -649,10 +433,15 @@ bot.onText(/\/done/, async msg => {
   if (!isOwnerUser(msg.from.id)) return;
 
   const session = ADMIN.uploads[msg.from.id];
-  if (!session) return bot.sendMessage(msg.chat.id, "❌ No active upload session");
+  if (!session) {
+    return bot.sendMessage(msg.chat.id, "❌ No active upload session");
+  }
 
   const parsed = parseQuestions(session.buffer);
-  if (!parsed.length) return bot.sendMessage(msg.chat.id, "❌ No valid questions detected");
+
+  if (parsed.length === 0) {
+    return bot.sendMessage(msg.chat.id, "❌ No valid questions detected");
+  }
 
   if (session.type === "daily" && parsed.length !== 25) {
     return bot.sendMessage(msg.chat.id,
@@ -666,10 +455,13 @@ Detected: ${parsed.length}`);
     type: session.type
   })));
 
-  ownerLog(`${session.type.toUpperCase()} uploaded — ${session.date} (${parsed.length} Q)`);
+  ownerLog(
+    `${session.type.toUpperCase()} uploaded — ${session.date} (${parsed.length} Q)`
+  );
 
   await bot.sendMessage(msg.chat.id,
 `✅ Upload successful
+
 📅 Date: ${session.date}
 📝 Questions: ${parsed.length}`);
 
@@ -677,32 +469,26 @@ Detected: ${parsed.length}`);
 });
 /*************************************************
  * NEET ASPIRANTS BOT — PART 3
- * PRACTICE RANDOM ENGINE + ANALYTICS
+ * PRACTICE RANDOM ENGINE + FINISH UI
  * ADD-ONLY • SAFE • LOCKED
  *************************************************/
 
 /* =================================================
-   PRACTICE RANDOM ENGINE (30–DAY / FULL POOL)
+   PRACTICE RANDOM QUESTION PICKER
 ================================================= */
-
 /*
-RULES (LOCKED):
-• Practice questions = unlimited bank
-• Owner ek saath 100–200+ Q upload kare
-• User ko har attempt me RANDOM 25 milenge
+LOCKED RULES:
+• Practice bank unlimited
+• Har attempt me RANDOM 25
 • Daily test se completely independent
-• Practice attempts unlimited
-• No leaderboard, no rank
+• No leaderboard / no rank
 */
 
 async function getRandomPracticeQuestions() {
   const total = await Question.countDocuments({ type: "practice" });
   if (total < 25) return [];
 
-  const skip = Math.max(
-    0,
-    Math.floor(Math.random() * (total - 25))
-  );
+  const skip = Math.floor(Math.random() * (total - 25 + 1));
 
   return Question.find({ type: "practice" })
     .skip(skip)
@@ -710,7 +496,71 @@ async function getRandomPracticeQuestions() {
 }
 
 /* =================================================
-   PRACTICE FINISH SCREEN (DETAILED)
+   SAFE OVERRIDE: startTest (PRACTICE ONLY)
+================================================= */
+/*
+IMPORTANT:
+• Sirf practice flow hook hota hai
+• Daily test bilkul untouched
+*/
+
+const originalStartTest = startTest;
+
+startTest = async function (chatId, userId, type) {
+  if (type !== "practice") {
+    return originalStartTest(chatId, userId, type);
+  }
+
+  if (!(await isJoined(userId))) {
+    return requireJoin(chatId, userId, "practice");
+  }
+
+  const qs = await getRandomPracticeQuestions();
+
+  if (!qs.length) {
+    return bot.sendMessage(chatId,
+      "⚠️ Practice questions not available yet.\nPlease try later."
+    );
+  }
+
+  activeTests[userId] = {
+    type: "practice",
+    date: todayDate(),
+    questions: qs,
+    index: 0,
+    score: 0,
+    answered: false,
+    startTime: null
+  };
+
+  await bot.sendMessage(chatId,
+`🔁 *Biology Practice Test*
+
+📝 Total Questions: 25
+⏱️ Time Limit: 30 Minutes
+📚 Purpose: Learning + Concept clarity
+
+📌 Rules:
+• Practice test multiple times de sakte ho
+• Score leaderboard me count nahi hota
+• Har question ke baad reason milega
+• Timer start hone ke baad rukega nahi
+
+👇 Ready ho?`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "▶️ Start Practice", callback_data: "start_now" }],
+          [{ text: "❌ Cancel", callback_data: "main_menu" }]
+        ]
+      }
+    }
+  );
+};
+
+/* =================================================
+   PRACTICE FINISH SCREEN (SAFE OVERRIDE)
 ================================================= */
 
 const originalFinishTest = finishTest;
@@ -743,254 +593,156 @@ finishTest = async function (chatId, userId, timeOver) {
 
   delete activeTests[userId];
 
-  const result =
+  await bot.sendMessage(chatId,
 `✅ *Practice Session Completed* 🎯
 
 📝 Total Questions: 25
 ✔️ Correct: ${correct}
 ❌ Wrong: ${wrong}
-⏱️ Time Taken: ${Math.floor(timeTaken/60)} min ${timeTaken%60} sec
+⏱️ Time Taken: ${Math.floor(timeTaken / 60)} min ${timeTaken % 60} sec
 
 📊 Accuracy: ${accuracy}%
 
 💡 Tip:
-Weak concepts revise karo
-Practice repeat karo`;
-
-  await bot.sendMessage(chatId, result, {
-    parse_mode: "Markdown",
-    reply_markup: {
-      inline_keyboard: [
-        [{ text: "🔁 Practice Again", callback_data: "practice" }],
-        [{ text: "🚀 START NOW", callback_data: "main_menu" }]
-      ]
+Galat questions ke concepts revise karo`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🔁 Practice Again", callback_data: "practice" }],
+          [{ text: "🚀 START NOW", callback_data: "main_menu" }]
+        ]
+      }
     }
-  });
+  );
 };
-
-/* =================================================
-   ANALYTICS — OWNER SIDE (SAFE)
-================================================= */
-
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
-
-  if (q.data === "admin_analytics") {
-    const totalUsers = await User.countDocuments();
-    const today = todayDate();
-
-    const todayAttempts = await Attempt.countDocuments({ date: today });
-    const avgAgg = await Attempt.aggregate([
-      { $match: { date: today } },
-      { $group: { _id: null, avg: { $avg: "$score" } } }
-    ]);
-
-    const avgScore = avgAgg.length
-      ? avgAgg[0].avg.toFixed(1)
-      : "0";
-
-    const practiceSessions = await User.aggregate([
-      { $group: { _id: null, total: { $sum: "$practiceTests" } } }
-    ]);
-
-    await bot.sendMessage(OWNER_ID,
-`📊 *BOT ANALYTICS*
-
-👥 Total Users: ${totalUsers}
-
-🧬 Daily Test (Today)
-• Attempts: ${todayAttempts}
-• Avg Score: ${avgScore} / 25
-
-🔁 Practice
-• Total Practice Sessions: ${
-  practiceSessions[0]?.total || 0
-}
-
-⏱️ Status: Bot running smoothly`,
-      { parse_mode: "Markdown" }
-    );
-  }
-});
 /*************************************************
  * NEET ASPIRANTS BOT — PART 4
  * ADMIN VIEW / DELETE / EMERGENCY / MIDNIGHT
- * OWNER ONLY • BUTTON UI • SAFE ADD-ONLY
+ * ADD-ONLY • SINGLE CALLBACK ROUTER SAFE
  *************************************************/
 
-/* =================================================
-   OWNER CONTROL ENTRY (BUTTON)
-================================================= */
+/* ================= ADMIN TEMP STATE ================= */
 
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
+const ADMIN_DELETE = {
+  step: null // daily_date | broadcast
+};
 
-  if (q.data === "admin_manage_tests") {
-    return bot.sendMessage(OWNER_ID,
-`🛠️ *TEST MANAGEMENT*
+/* =====================================================
+   EXTEND OWNER CALLBACK HANDLER (PART-4)
+===================================================== */
 
-Choose what you want to manage 👇`,
+const originalOwnerCallbacks = handleOwnerCallbacks;
+
+handleOwnerCallbacks = async function (data, chatId, userId) {
+  // Let PART-2 handle first
+  const handled = await originalOwnerCallbacks(data, chatId, userId);
+  if (handled) return true;
+
+  if (!isOwnerUser(userId)) return false;
+
+  /* ===== ADMIN MANAGE ENTRY ===== */
+  if (data === "ADMIN_MANAGE") {
+    await bot.sendMessage(chatId,
+`🛠️ *ADMIN MANAGEMENT*
+
+Choose an action 👇`,
       {
         parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "📋 View Daily Tests", callback_data: "admin_view_daily" }],
-            [{ text: "📋 View Practice Bank", callback_data: "admin_view_practice" }],
-            [{ text: "🗑️ Delete Daily Test", callback_data: "admin_delete_daily" }],
-            [{ text: "🗑️ Delete Practice Data", callback_data: "admin_delete_practice" }],
-            [{ text: "⬅️ Back", callback_data: "owner_panel" }]
+            [{ text: "📋 View Daily Tests", callback_data: "ADMIN_VIEW_DAILY" }],
+            [{ text: "📋 View Practice Bank", callback_data: "ADMIN_VIEW_PRACTICE" }],
+            [{ text: "🗑️ Delete Daily Test", callback_data: "ADMIN_DELETE_DAILY" }],
+            [{ text: "🗑️ Clear Practice Bank", callback_data: "ADMIN_DELETE_PRACTICE" }],
+            [{ text: "🚨 Emergency Controls", callback_data: "ADMIN_EMERGENCY" }],
+            [{ text: "⬅️ Back", callback_data: "OWNER_PANEL" }]
           ]
         }
       }
     );
+    return true;
   }
-});
 
-/* =================================================
-   VIEW DAILY TESTS
-================================================= */
-
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
-
-  if (q.data === "admin_view_daily") {
+  /* ===== VIEW DAILY TESTS ===== */
+  if (data === "ADMIN_VIEW_DAILY") {
     const dates = await Question.find({ type: "daily" }).distinct("date");
 
-    return bot.sendMessage(OWNER_ID,
+    await bot.sendMessage(chatId,
 `📋 *DAILY TESTS*
 
 ${dates.length ? dates.join("\n") : "No daily tests uploaded"}`,
       { parse_mode: "Markdown" }
     );
+    return true;
   }
-});
 
-/* =================================================
-   VIEW PRACTICE BANK
-================================================= */
-
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
-
-  if (q.data === "admin_view_practice") {
+  /* ===== VIEW PRACTICE BANK ===== */
+  if (data === "ADMIN_VIEW_PRACTICE") {
     const total = await Question.countDocuments({ type: "practice" });
 
-    return bot.sendMessage(OWNER_ID,
+    await bot.sendMessage(chatId,
 `📋 *PRACTICE QUESTION BANK*
 
 🧠 Total Questions: ${total}
 
-📌 Practice system:
 • Random 25 per attempt
 • Unlimited attempts
 • No leaderboard`,
       { parse_mode: "Markdown" }
     );
+    return true;
   }
-});
 
-/* =================================================
-   DELETE DAILY TEST (DATE INPUT)
-================================================= */
-
-const ADMIN_DELETE = {};
-
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
-
-  if (q.data === "admin_delete_daily") {
+  /* ===== DELETE DAILY (ASK DATE) ===== */
+  if (data === "ADMIN_DELETE_DAILY") {
     ADMIN_DELETE.step = "daily_date";
-    return bot.sendMessage(OWNER_ID,
+    await bot.sendMessage(chatId,
 `🗑️ *Delete Daily Test*
 
 Send date to delete:
 YYYY-MM-DD`);
-  }
-});
-
-bot.on("message", async msg => {
-  if (!isOwnerUser(msg.from?.id)) return;
-  if (ADMIN_DELETE.step !== "daily_date") return;
-
-  const d = msg.text?.trim();
-  if (!validDate(d)) {
-    return bot.sendMessage(OWNER_ID, "❌ Invalid date format");
+    return true;
   }
 
-  const count = await Question.countDocuments({ date: d, type: "daily" });
-  await Question.deleteMany({ date: d, type: "daily" });
-  await Attempt.deleteMany({ date: d });
-
-  ADMIN_DELETE.step = null;
-
-  ownerLog(`Daily test deleted — ${d} (${count} Q)`);
-
-  await bot.sendMessage(OWNER_ID,
-`✅ *Daily Test Deleted*
-
-📅 Date: ${d}
-🧪 Questions removed: ${count}`,
-    { parse_mode: "Markdown" }
-  );
-});
-
-/* =================================================
-   DELETE PRACTICE BANK (FULL)
-================================================= */
-
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
-
-  if (q.data === "admin_delete_practice") {
+  /* ===== DELETE PRACTICE BANK (FULL) ===== */
+  if (data === "ADMIN_DELETE_PRACTICE") {
     const total = await Question.countDocuments({ type: "practice" });
-
     await Question.deleteMany({ type: "practice" });
 
     ownerLog(`Practice bank cleared (${total} Q)`);
 
-    return bot.sendMessage(OWNER_ID,
+    await bot.sendMessage(chatId,
 `🗑️ *Practice Bank Cleared*
 
-🧠 Questions deleted: ${total}`,
+Questions deleted: ${total}`,
       { parse_mode: "Markdown" }
     );
+    return true;
   }
-});
 
-/* =================================================
-   EMERGENCY CONTROLS
-================================================= */
-
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
-
-  if (q.data === "admin_emergency") {
-    return bot.sendMessage(OWNER_ID,
-`⚙️ *EMERGENCY CONTROLS*
+  /* ===== EMERGENCY PANEL ===== */
+  if (data === "ADMIN_EMERGENCY") {
+    await bot.sendMessage(chatId,
+`🚨 *EMERGENCY CONTROLS*
 
 Use carefully 👇`,
       {
         parse_mode: "Markdown",
         reply_markup: {
           inline_keyboard: [
-            [{ text: "🚨 Force New Day", callback_data: "admin_force_new_day" }],
-            [{ text: "📢 Send Test Alert", callback_data: "admin_manual_broadcast" }],
-            [{ text: "⬅️ Back", callback_data: "owner_panel" }]
+            [{ text: "⚡ Force New Day", callback_data: "ADMIN_FORCE_NEW_DAY" }],
+            [{ text: "📢 Manual Broadcast", callback_data: "ADMIN_BROADCAST" }],
+            [{ text: "⬅️ Back", callback_data: "ADMIN_MANAGE" }]
           ]
         }
       }
     );
+    return true;
   }
-});
 
-/* =================================================
-   FORCE NEW DAY (MANUAL)
-================================================= */
-
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
-
-  if (q.data === "admin_force_new_day") {
+  /* ===== FORCE NEW DAY ===== */
+  if (data === "ADMIN_FORCE_NEW_DAY") {
     const users = await User.find({});
     let sent = 0;
 
@@ -1003,218 +755,425 @@ bot.on("callback_query", async q => {
       } catch {}
     }
 
-    ownerLog(`Force new day triggered — ${sent} users notified`);
+    ownerLog(`Force new day — notified ${sent} users`);
 
-    return bot.sendMessage(OWNER_ID,
+    await bot.sendMessage(chatId,
 `✅ *New Day Forced*
 
-📢 Notifications sent: ${sent}`,
+Users notified: ${sent}`,
+      { parse_mode: "Markdown" }
+    );
+    return true;
+  }
+
+  /* ===== MANUAL BROADCAST ===== */
+  if (data === "ADMIN_BROADCAST") {
+    ADMIN_DELETE.step = "broadcast";
+    await bot.sendMessage(chatId,
+`📢 *Manual Broadcast*
+
+Send message text now`);
+    return true;
+  }
+
+  return false;
+};
+
+/* =================================================
+   ADMIN MESSAGE HANDLER (DELETE / BROADCAST)
+================================================= */
+
+bot.on("message", async msg => {
+  if (!isOwnerUser(msg.from?.id)) return;
+
+  /* ---- DELETE DAILY BY DATE ---- */
+  if (ADMIN_DELETE.step === "daily_date") {
+    const d = msg.text?.trim();
+    if (!validDate(d)) {
+      return bot.sendMessage(msg.chat.id, "❌ Invalid date format");
+    }
+
+    const count = await Question.countDocuments({ date: d, type: "daily" });
+    await Question.deleteMany({ date: d, type: "daily" });
+    await Attempt.deleteMany({ date: d });
+
+    ADMIN_DELETE.step = null;
+
+    ownerLog(`Daily test deleted — ${d} (${count} Q)`);
+
+    return bot.sendMessage(msg.chat.id,
+`✅ *Daily Test Deleted*
+
+📅 Date: ${d}
+🧪 Questions removed: ${count}`,
+      { parse_mode: "Markdown" }
+    );
+  }
+
+  /* ---- MANUAL BROADCAST ---- */
+  if (ADMIN_DELETE.step === "broadcast") {
+    const users = await User.find({});
+    let sent = 0;
+
+    for (const u of users) {
+      try {
+        await bot.sendMessage(u.user_id, msg.text);
+        sent++;
+      } catch {}
+    }
+
+    ADMIN_DELETE.step = null;
+
+    ownerLog(`Manual broadcast sent (${sent} users)`);
+
+    return bot.sendMessage(msg.chat.id,
+`✅ *Broadcast Completed*
+
+Users reached: ${sent}`,
       { parse_mode: "Markdown" }
     );
   }
 });
 
 /* =================================================
-   MANUAL BROADCAST (OWNER)
-================================================= */
-
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
-
-  if (q.data === "admin_manual_broadcast") {
-    ADMIN_DELETE.step = "broadcast";
-    return bot.sendMessage(OWNER_ID,
-`📢 *Manual Broadcast*
-
-Send message text now`);
-  }
-});
-
-bot.on("message", async msg => {
-  if (!isOwnerUser(msg.from?.id)) return;
-  if (ADMIN_DELETE.step !== "broadcast") return;
-
-  const users = await User.find({});
-  let sent = 0;
-
-  for (const u of users) {
-    try {
-      await bot.sendMessage(u.user_id, msg.text);
-      sent++;
-    } catch {}
-  }
-
-  ADMIN_DELETE.step = null;
-
-  ownerLog(`Manual broadcast sent to ${sent} users`);
-
-  await bot.sendMessage(OWNER_ID,
-`✅ *Broadcast Completed*
-
-👥 Users reached: ${sent}`,
-    { parse_mode: "Markdown" }
-  );
-});
-/* =================================================
    MIDNIGHT REPORT (AUTO)
 ================================================= */
 
-// ⚠️ Ensure this line exists ONCE at top of file
-// const cron = require("node-cron");
-
+// ⚠️ cron already required at top in PART-1
 cron.schedule("0 0 * * *", async () => {
   try {
     const today = todayDate();
-
     const attempts = await Attempt.countDocuments({ date: today });
-
     ownerLog(`🌙 Midnight report: ${attempts} daily attempts today`);
   } catch (err) {
     console.error("❌ Midnight cron error:", err);
   }
 });
-
 /*************************************************
  * NEET ASPIRANTS BOT — PART 5
- * FINAL OWNER PANEL POLISH
- * ALL BUTTONS • ZERO TEXT COMMANDS
+ * ANALYTICS + STATUS + MAINTENANCE
+ * ADD-ONLY • SAFE • LOCKED
  *************************************************/
 
-/* ===============================================
-   OWNER PANEL ENTRY POINT
-================================================ */
+/* ================= MAINTENANCE STATE ================= */
 
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
+let MAINTENANCE_MODE = false;
 
-  if (q.data === "open_owner_panel") {
-    return bot.sendMessage(OWNER_ID,
-`👑 *OWNER CONTROL CENTER*
+/* =====================================================
+   EXTEND OWNER CALLBACK HANDLER (PART-5)
+===================================================== */
 
-Manage everything from here 👇`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "📤 Upload & Question Bank", callback_data: "panel_uploads" }],
-            [{ text: "📋 View / Delete Data", callback_data: "admin_manage_tests" }],
-            [{ text: "📊 Analytics & Stats", callback_data: "panel_analytics" }],
-            [{ text: "⚙️ Emergency & Broadcast", callback_data: "admin_emergency" }],
-            [{ text: "📜 Owner Logs", callback_data: "panel_logs" }]
-          ]
-        }
-      }
-    );
-  }
-});
+const originalOwnerCallbacks_P5 = handleOwnerCallbacks;
 
-/* ===============================================
-   UPLOAD PANEL
-================================================ */
+handleOwnerCallbacks = async function (data, chatId, userId) {
+  // Let PART-2 → PART-4 handle first
+  const handled = await originalOwnerCallbacks_P5(data, chatId, userId);
+  if (handled) return true;
 
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
+  if (!isOwnerUser(userId)) return false;
 
-  if (q.data === "panel_uploads") {
-    return bot.sendMessage(OWNER_ID,
-`📤 *UPLOAD & QUESTION BANK*
-
-Choose upload type 👇`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "🧬 Upload Daily Test (25 Q)", callback_data: "admin_upload_daily" }],
-            [{ text: "🔁 Upload Practice Questions", callback_data: "admin_upload_practice" }],
-            [{ text: "⬅️ Back", callback_data: "open_owner_panel" }]
-          ]
-        }
-      }
-    );
-  }
-});
-
-/* ===============================================
-   ANALYTICS PANEL
-================================================ */
-
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
-
-  if (q.data === "panel_analytics") {
+  /* ===== ANALYTICS PANEL ===== */
+  if (data === "ADMIN_ANALYTICS") {
     const totalUsers = await User.countDocuments();
-    const totalAttempts = await Attempt.countDocuments();
-    const totalPractice = await User.aggregate([
-      { $group: { _id: null, total: { $sum: "$practiceTests" } } }
+    const today = todayDate();
+
+    const todayAttempts = await Attempt.countDocuments({ date: today });
+
+    const avgAgg = await Attempt.aggregate([
+      { $match: { date: today } },
+      { $group: { _id: null, avg: { $avg: "$score" } } }
     ]);
 
-    return bot.sendMessage(OWNER_ID,
-`📊 *BOT ANALYTICS SNAPSHOT*
+    const avgScore = avgAgg.length
+      ? avgAgg[0].avg.toFixed(1)
+      : "0";
+
+    const practiceAgg = await User.aggregate([
+      {
+        $group: {
+          _id: null,
+          sessions: { $sum: "$practiceTests" },
+          correct: { $sum: "$practiceCorrect" },
+          wrong: { $sum: "$practiceWrong" }
+        }
+      }
+    ]);
+
+    const p = practiceAgg[0] || { sessions: 0, correct: 0, wrong: 0 };
+    const acc = p.correct + p.wrong
+      ? ((p.correct / (p.correct + p.wrong)) * 100).toFixed(1)
+      : "0";
+
+    await bot.sendMessage(chatId,
+`📊 *BOT ANALYTICS*
 
 👥 Total Users: ${totalUsers}
-🧪 Total Daily Attempts: ${totalAttempts}
-🔁 Practice Sessions: ${totalPractice[0]?.total || 0}
 
-📌 Leaderboard + Progress auto tracked`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "⬅️ Back", callback_data: "open_owner_panel" }]
-          ]
-        }
-      }
+🧬 Daily Test (Today)
+• Attempts: ${todayAttempts}
+• Avg Score: ${avgScore} / 25
+
+🔁 Practice
+• Sessions: ${p.sessions}
+• Accuracy: ${acc} %
+
+⚙️ Status: Running`,
+      { parse_mode: "Markdown" }
+    );
+    return true;
+  }
+
+  /* ===== BOT STATUS ===== */
+  if (data === "ADMIN_STATUS") {
+    await bot.sendMessage(chatId,
+`📡 *BOT STATUS*
+
+🟢 Bot: Online
+🟢 Database: Connected
+🔒 Maintenance: ${MAINTENANCE_MODE ? "ON" : "OFF"}
+⏱️ Server Time: ${new Date().toLocaleString()}`,
+      { parse_mode: "Markdown" }
+    );
+    return true;
+  }
+
+  /* ===== MAINTENANCE ON ===== */
+  if (data === "ADMIN_MAINT_ON") {
+    MAINTENANCE_MODE = true;
+    ownerLog("Maintenance mode ENABLED");
+
+    await bot.sendMessage(chatId,
+`🔒 *Maintenance Enabled*
+
+Users ko temporarily block kar diya gaya hai.`,
+      { parse_mode: "Markdown" }
+    );
+    return true;
+  }
+
+  /* ===== MAINTENANCE OFF ===== */
+  if (data === "ADMIN_MAINT_OFF") {
+    MAINTENANCE_MODE = false;
+    ownerLog("Maintenance mode DISABLED");
+
+    await bot.sendMessage(chatId,
+`✅ *Maintenance Disabled*
+
+Bot normal mode me aa gaya hai.`,
+      { parse_mode: "Markdown" }
+    );
+    return true;
+  }
+
+  return false;
+};
+
+/* =================================================
+   MAINTENANCE CHECK (GLOBAL USER BLOCK)
+================================================= */
+
+const originalStartTest_P5 = startTest;
+
+startTest = async function (chatId, userId, type) {
+  if (MAINTENANCE_MODE && !isOwnerUser(userId)) {
+    return bot.sendMessage(chatId,
+`🔧 *Bot Under Maintenance*
+
+Thodi der baad try karein 🙏`,
+      { parse_mode: "Markdown" }
     );
   }
-});
+  return originalStartTest_P5(chatId, userId, type);
+};
 
-/* ===============================================
-   OWNER LOG VIEW
-================================================ */
+/* =================================================
+   OWNER PANEL BUTTON EXTENSION (SAFE)
+================================================= */
 
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
+// Add these buttons INSIDE OWNER PANEL UI (PART-2)
+// (Reference only — already handled by callbacks)
+//
+// 📊 Analytics        → ADMIN_ANALYTICS
+// 📡 Bot Status       → ADMIN_STATUS
+// 🔒 Maintenance ON   → ADMIN_MAINT_ON
+// 🔓 Maintenance OFF  → ADMIN_MAINT_OFF
+/*************************************************
+ * NEET ASPIRANTS BOT — PART 6 (FINAL)
+ * OWNER MODE + FORCE DAY + CLEANUP + BROADCAST
+ * ADD-ONLY • SAFE • LOCKED
+ *************************************************/
 
-  if (q.data === "panel_logs") {
-    const logs =
-      ADMIN.logs.length
-        ? ADMIN.logs.join("\n")
-        : "No recent admin actions";
+/* ================= OWNER MODE ================= */
 
-    return bot.sendMessage(OWNER_ID,
-`📜 *OWNER ACTION LOGS*
+let OWNER_MODE = false;
 
-${logs}`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "⬅️ Back", callback_data: "open_owner_panel" }]
-          ]
-        }
-      }
+/* ================= DAILY TEST STATE ================= */
+
+let TODAY_TEST_OPEN = true;
+
+/* =====================================================
+   EXTEND OWNER CALLBACK HANDLER (PART-6)
+===================================================== */
+
+const originalOwnerCallbacks_P6 = handleOwnerCallbacks;
+
+handleOwnerCallbacks = async function (data, chatId, userId) {
+  const handled = await originalOwnerCallbacks_P6(data, chatId, userId);
+  if (handled) return true;
+
+  if (!isOwnerUser(userId)) return false;
+
+  /* ===== FORCE NEW DAY ===== */
+  if (data === "ADMIN_FORCE_NEW_DAY") {
+    TODAY_TEST_OPEN = true;
+    ownerLog("Force new day triggered");
+
+    await bot.sendMessage(chatId,
+`✅ *New Day Forced*
+
+Daily test manually reset.`,
+      { parse_mode: "Markdown" }
+    );
+    return true;
+  }
+
+  /* ===== CLOSE TODAY TEST ===== */
+  if (data === "ADMIN_CLOSE_TODAY") {
+    TODAY_TEST_OPEN = false;
+    ownerLog("Today test CLOSED");
+
+    await bot.sendMessage(chatId,
+`🔒 *Today’s Test Closed*`,
+      { parse_mode: "Markdown" }
+    );
+    return true;
+  }
+
+  /* ===== OPEN TODAY TEST ===== */
+  if (data === "ADMIN_OPEN_TODAY") {
+    TODAY_TEST_OPEN = true;
+    ownerLog("Today test OPENED");
+
+    await bot.sendMessage(chatId,
+`🔓 *Today’s Test Opened*`,
+      { parse_mode: "Markdown" }
+    );
+    return true;
+  }
+
+  return false;
+};
+
+/* =====================================================
+   START TEST OVERRIDE (OWNER MODE + OPEN/CLOSE)
+===================================================== */
+
+const originalStartTest_P6 = startTest;
+
+startTest = async function (chatId, userId, type) {
+  if (!OWNER_MODE && !TODAY_TEST_OPEN && type === "daily") {
+    return bot.sendMessage(chatId,
+`⛔ *Today’s Test is Closed*
+
+Kal attempt karein 💪`,
+      { parse_mode: "Markdown" }
     );
   }
+
+  return originalStartTest_P6(chatId, userId, type);
+};
+
+/* =====================================================
+   OWNER COMMANDS (TEXT)
+===================================================== */
+
+bot.onText(/\/owner_mode_on/, msg => {
+  if (!isOwnerUser(msg.from.id)) return;
+  OWNER_MODE = true;
+  ownerLog("Owner mode ENABLED");
+
+  bot.sendMessage(msg.chat.id, "👑 Owner Mode ON");
 });
 
-/* ===============================================
-   OWNER PANEL ENTRY BUTTON
-   (Shown ONLY to OWNER)
-================================================ */
+bot.onText(/\/owner_mode_off/, msg => {
+  if (!isOwnerUser(msg.from.id)) return;
+  OWNER_MODE = false;
+  ownerLog("Owner mode DISABLED");
 
-bot.on("callback_query", async q => {
-  if (q.data !== "main_menu") return;
-  if (!isOwnerUser(q.from.id)) return;
+  bot.sendMessage(msg.chat.id, "👑 Owner Mode OFF");
+});
 
-  await bot.sendMessage(q.message.chat.id,
-`👑 *OWNER QUICK ACCESS*`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "👑 Open Owner Panel", callback_data: "open_owner_panel" }]
-        ]
-      }
-    }
-  );
+/* ================= FORCE / OPEN / CLOSE ================= */
+
+bot.onText(/\/force_new_day/, msg => {
+  if (!isOwnerUser(msg.from.id)) return;
+  TODAY_TEST_OPEN = true;
+  ownerLog("Force new day (command)");
+
+  bot.sendMessage(msg.chat.id, "✅ New day forced");
+});
+
+bot.onText(/\/close_today_test/, msg => {
+  if (!isOwnerUser(msg.from.id)) return;
+  TODAY_TEST_OPEN = false;
+  ownerLog("Today test closed");
+
+  bot.sendMessage(msg.chat.id, "🔒 Today test closed");
+});
+
+bot.onText(/\/open_today_test/, msg => {
+  if (!isOwnerUser(msg.from.id)) return;
+  TODAY_TEST_OPEN = true;
+  ownerLog("Today test opened");
+
+  bot.sendMessage(msg.chat.id, "🔓 Today test opened");
+});
+
+/* ================= CLEANUP ================= */
+
+bot.onText(/\/cleanup_old_tests/, async msg => {
+  if (!isOwnerUser(msg.from.id)) return;
+
+  const limit = new Date();
+  limit.setDate(limit.getDate() - 30);
+  const d = limit.toISOString().split("T")[0];
+
+  const q = await Question.deleteMany({ type: "daily", date: { $lt: d } });
+  ownerLog(`Old daily tests cleaned (${q.deletedCount})`);
+
+  bot.sendMessage(msg.chat.id,
+`🧹 Old Daily Tests Deleted: ${q.deletedCount}`);
+});
+
+bot.onText(/\/cleanup_old_practice/, async msg => {
+  if (!isOwnerUser(msg.from.id)) return;
+
+  const q = await Question.deleteMany({ type: "practice" });
+  ownerLog(`Practice bank cleaned (${q.deletedCount})`);
+
+  bot.sendMessage(msg.chat.id,
+`🧹 Practice Questions Deleted: ${q.deletedCount}`);
+});
+
+/* ================= BROADCAST ================= */
+
+bot.onText(/\/broadcast (.+)/, async (msg, match) => {
+  if (!isOwnerUser(msg.from.id)) return;
+
+  const text = match[1];
+  const users = await User.find({});
+  let sent = 0;
+
+  for (const u of users) {
+    try {
+      await bot.sendMessage(u.user_id, text);
+      sent++;
+    } catch {}
+  }
+
+  ownerLog(`Broadcast sent (${sent} users)`);
+
+  bot.sendMessage(msg.chat.id,
+`📢 Broadcast Sent  
+👥 Users reached: ${sent}`);
 });

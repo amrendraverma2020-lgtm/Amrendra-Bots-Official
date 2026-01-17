@@ -649,9 +649,46 @@ async function handleOwnerCallbacks(data, chatId, userId) {
 
   const session = ADMIN.uploads[userId];
 
-  if (data === "UPLOAD_BANK") { ... return true; }
+  /* ===== UPLOAD BANK ===== */
+  if (data === "UPLOAD_BANK") {
+    await bot.sendMessage(chatId,
+`📤 UPLOAD & QUESTION BANK
 
-  if (data === "ADMIN_DAILY") { ... return true; }
+Choose upload type 👇`,
+      {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🧬 Upload Daily Test", callback_data: "ADMIN_DAILY" }],
+            [{ text: "🔁 Upload Practice Bank", callback_data: "ADMIN_PRACTICE" }],
+            [{ text: "⬅️ Back", callback_data: "OWNER_PANEL" }]
+          ]
+        }
+      }
+    );
+    return true;
+  }
+
+  /* ===== DAILY UPLOAD ===== */
+  if (data === "ADMIN_DAILY") {
+    if (session) {
+      await bot.sendMessage(chatId, "⚠️ Finish current upload first using /done");
+      return true;
+    }
+
+    ADMIN.uploads[userId] = {
+      type: "daily",
+      step: "date",
+      date: null,
+      buffer: ""
+    };
+
+    await bot.sendMessage(chatId,
+`📅 DAILY TEST UPLOAD
+
+Send date in format:
+YYYY-MM-DD`);
+    return true;
+  }
 
   /* ===== OVERWRITE YES ===== */
   if (data === "ADMIN_OVERWRITE_YES") {
@@ -664,7 +701,6 @@ async function handleOwnerCallbacks(data, chatId, userId) {
 `📝 Old data deleted.
 Paste questions now
 Send /done when finished`);
-
     return true;
   }
 

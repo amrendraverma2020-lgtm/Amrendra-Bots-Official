@@ -644,36 +644,41 @@ Send /done when finished`);
 `📝 Detected questions so far: ${count}`);
   }
 });
+async function handleOwnerCallbacks(data, chatId, userId) {
+  if (!isOwnerUser(userId)) return false;
 
-/* ================= OVERWRITE CALLBACKS ================= */
+  const session = ADMIN.uploads[userId];
 
-bot.on("callback_query", async q => {
-  if (!isOwnerUser(q.from.id)) return;
+  if (data === "UPLOAD_BANK") { ... return true; }
 
-  const session = ADMIN.uploads[q.from.id];
-  if (!session) return;
+  if (data === "ADMIN_DAILY") { ... return true; }
 
-  if (q.data === "ADMIN_OVERWRITE_NO") {
-    delete ADMIN.uploads[q.from.id];
-    ownerLog("Upload cancelled");
-    return bot.sendMessage(q.message.chat.id, "❌ Upload cancelled");
-  }
+  /* ===== OVERWRITE YES ===== */
+  if (data === "ADMIN_OVERWRITE_YES") {
+    if (!session) return true;
 
-  if (q.data === "ADMIN_OVERWRITE_YES") {
     await Question.deleteMany({ date: session.date, type: session.type });
     session.step = "questions";
-    ownerLog(`Overwrite confirmed: ${session.type} ${session.date}`);
 
-    return bot.sendMessage(q.message.chat.id,
+    await bot.sendMessage(chatId,
 `📝 Old data deleted.
 Paste questions now
 Send /done when finished`);
-  }
-});
 
+    return true;
+  }
+
+  /* ===== OVERWRITE NO ===== */
+  if (data === "ADMIN_OVERWRITE_NO") {
+    delete ADMIN.uploads[userId];
+    await bot.sendMessage(chatId, "❌ Upload cancelled");
+    return true;
+  }
+
+  return false;
+}
 /* ================= /DONE ================= */
 
-bot.onText(/\/done/, async msg => {
   if (!isOwnerUser(msg.from.id)) return;
 
   const session = ADMIN.uploads[msg.from.id];

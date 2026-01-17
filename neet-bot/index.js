@@ -421,9 +421,9 @@ async function showProgress(chatId, userId) {
   );
 }
 /*************************************************
- * NEET ASPIRANTS BOT — PART 2
+ * NEET ASPIRANTS BOT — PART 2 (FINAL FIXED)
  * OWNER UPLOAD + /DONE + STRONG PARSER
- * SAFE MODULE (NO EXTRA CALLBACK LISTENER)
+ * SINGLE CALLBACK FLOW (NO DUPLICATES)
  *************************************************/
 
 /* ================= OWNER STATE ================= */
@@ -444,17 +444,6 @@ function validDate(d) {
 }
 
 /* ================= STRONG QUESTION PARSER ================= */
-/*
-SUPPORTED FORMAT (COPY-PASTE FRIENDLY):
-
-Q1. Question text
-A) option
-B) option
-C) option
-D) option
-Ans: B
-Reason: explanation
-*/
 
 function parseQuestions(raw) {
   const blocks = raw
@@ -482,9 +471,9 @@ function parseQuestions(raw) {
 
   return out;
 }
+
 /* =====================================================
-   OWNER CALLBACK HANDLER
-   (CALLED FROM PART-1 CALLBACK ROUTER)
+   OWNER CALLBACK HANDLER (ONLY PLACE FOR OWNER BUTTONS)
 ===================================================== */
 
 async function handleOwnerCallbacks(data, chatId, userId) {
@@ -492,7 +481,7 @@ async function handleOwnerCallbacks(data, chatId, userId) {
 
   const session = ADMIN.uploads[userId];
 
-  /* ===== OWNER PANEL ENTRY ===== */
+  /* ===== OWNER PANEL ===== */
   if (data === "OWNER_PANEL") {
     await bot.sendMessage(chatId,
 `👑 OWNER CONTROL PANEL
@@ -509,145 +498,6 @@ Choose an action 👇`,
     );
     return true;
   }
-
-  /* ===== UPLOAD BANK MENU ===== */
-  if (data === "UPLOAD_BANK") {
-    await bot.sendMessage(chatId,
-`📤 UPLOAD & QUESTION BANK
-
-Choose upload type 👇`,
-      {
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "🧬 Upload Daily Test", callback_data: "ADMIN_DAILY" }],
-            [{ text: "🔁 Upload Practice Bank", callback_data: "ADMIN_PRACTICE" }],
-            [{ text: "⬅️ Back", callback_data: "OWNER_PANEL" }]
-          ]
-        }
-      }
-    );
-    return true;
-  }
-
-  /* ===== START DAILY UPLOAD ===== */
-  if (data === "ADMIN_DAILY") {
-    if (session) {
-      await bot.sendMessage(chatId, "⚠️ Finish current upload first using /done");
-      return true;
-    }
-
-    ADMIN.uploads[userId] = {
-      type: "daily",
-      step: "date",
-      date: null,
-      buffer: ""
-    };
-
-    ownerLog("Started DAILY upload");
-
-    await bot.sendMessage(chatId,
-`📅 DAILY TEST UPLOAD
-
-Send date in format:
-YYYY-MM-DD`);
-    return true;
-  }
-
-  /* ===== START PRACTICE UPLOAD ===== */
-  if (data === "ADMIN_PRACTICE") {
-    if (session) {
-      await bot.sendMessage(chatId, "⚠️ Finish current upload first using /done");
-      return true;
-    }
-
-    ADMIN.uploads[userId] = {
-      type: "practice",
-      step: "date",
-      date: null,
-      buffer: ""
-    };
-
-    ownerLog("Started PRACTICE upload");
-
-    await bot.sendMessage(chatId,
-`📅 PRACTICE QUESTION BANK
-
-Send date (grouping only):
-YYYY-MM-DD`);
-    return true;
-  }
-
-  /* ===== OWNER LOGS ===== */
-  if (data === "ADMIN_LOGS") {
-    const logs = ADMIN.logs.length
-      ? ADMIN.logs.join("\n")
-      : "No logs yet";
-
-    await bot.sendMessage(chatId,
-`📜 OWNER LOGS
-
-${logs}`);
-    return true;
-  }
-
-  return false; // 👈 very important
-}
-/* ================= OWNER MESSAGE FLOW ================= */
-
-bot.on("message", async msg => {
-  if (!isOwnerUser(msg.from?.id)) return;
-
-  const session = ADMIN.uploads[msg.from.id];
-  if (!session) return;
-
-  /* ---- DATE STEP ---- */
-  if (session.step === "date") {
-    const d = msg.text?.trim();
-    if (!validDate(d)) {
-      return bot.sendMessage(msg.chat.id, "❌ Invalid date. Use YYYY-MM-DD");
-    }
-
-    const exists = await Question.countDocuments({ date: d, type: session.type });
-    session.date = d;
-
-    if (exists > 0) {
-      session.step = "confirm";
-      return bot.sendMessage(msg.chat.id,
-`⚠️ ${session.type.toUpperCase()} already exists for ${d}
-
-Overwrite existing questions?`,
-        {
-          reply_markup: {
-            inline_keyboard: [
-              [{ text: "✅ Overwrite", callback_data: "ADMIN_OVERWRITE_YES" }],
-              [{ text: "❌ Cancel", callback_data: "ADMIN_OVERWRITE_NO" }]
-            ]
-          }
-        }
-      );
-    }
-
-    session.step = "questions";
-    return bot.sendMessage(msg.chat.id,
-`📝 Paste all questions now
-(you can send multiple messages)
-
-Send /done when finished`);
-  }
-
-  /* ---- QUESTIONS STEP ---- */
-  if (session.step === "questions" && msg.text && !msg.text.startsWith("/")) {
-    session.buffer += "\n\n" + msg.text;
-    const count = parseQuestions(session.buffer).length;
-
-    return bot.sendMessage(msg.chat.id,
-`📝 Detected questions so far: ${count}`);
-  }
-});
-async function handleOwnerCallbacks(data, chatId, userId) {
-  if (!isOwnerUser(userId)) return false;
-
-  const session = ADMIN.uploads[userId];
 
   /* ===== UPLOAD BANK ===== */
   if (data === "UPLOAD_BANK") {
@@ -682,11 +532,33 @@ Choose upload type 👇`,
       buffer: ""
     };
 
+    ownerLog("Started DAILY upload");
+
     await bot.sendMessage(chatId,
 `📅 DAILY TEST UPLOAD
+Send date (YYYY-MM-DD)`);
+    return true;
+  }
 
-Send date in format:
-YYYY-MM-DD`);
+  /* ===== PRACTICE UPLOAD ===== */
+  if (data === "ADMIN_PRACTICE") {
+    if (session) {
+      await bot.sendMessage(chatId, "⚠️ Finish current upload first using /done");
+      return true;
+    }
+
+    ADMIN.uploads[userId] = {
+      type: "practice",
+      step: "date",
+      date: null,
+      buffer: ""
+    };
+
+    ownerLog("Started PRACTICE upload");
+
+    await bot.sendMessage(chatId,
+`📅 PRACTICE BANK UPLOAD
+Send date (YYYY-MM-DD)`);
     return true;
   }
 
@@ -696,6 +568,8 @@ YYYY-MM-DD`);
 
     await Question.deleteMany({ date: session.date, type: session.type });
     session.step = "questions";
+
+    ownerLog(`Overwrite confirmed: ${session.type} ${session.date}`);
 
     await bot.sendMessage(chatId,
 `📝 Old data deleted.
@@ -707,26 +581,78 @@ Send /done when finished`);
   /* ===== OVERWRITE NO ===== */
   if (data === "ADMIN_OVERWRITE_NO") {
     delete ADMIN.uploads[userId];
+    ownerLog("Upload cancelled");
+
     await bot.sendMessage(chatId, "❌ Upload cancelled");
+    return true;
+  }
+
+  /* ===== OWNER LOGS ===== */
+  if (data === "ADMIN_LOGS") {
+    const logs = ADMIN.logs.length ? ADMIN.logs.join("\n") : "No logs yet";
+    await bot.sendMessage(chatId, `📜 OWNER LOGS\n\n${logs}`);
     return true;
   }
 
   return false;
 }
+
+/* ================= OWNER MESSAGE FLOW ================= */
+
+bot.on("message", async msg => {
+  if (!isOwnerUser(msg.from?.id)) return;
+
+  const session = ADMIN.uploads[msg.from.id];
+  if (!session) return;
+
+  if (session.step === "date") {
+    const d = msg.text?.trim();
+    if (!validDate(d)) {
+      return bot.sendMessage(msg.chat.id, "❌ Invalid date. Use YYYY-MM-DD");
+    }
+
+    const exists = await Question.countDocuments({ date: d, type: session.type });
+    session.date = d;
+
+    if (exists > 0) {
+      session.step = "confirm";
+      return bot.sendMessage(msg.chat.id,
+`⚠️ ${session.type.toUpperCase()} already exists for ${d}
+Overwrite existing questions?`,
+        {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: "✅ Overwrite", callback_data: "ADMIN_OVERWRITE_YES" }],
+              [{ text: "❌ Cancel", callback_data: "ADMIN_OVERWRITE_NO" }]
+            ]
+          }
+        }
+      );
+    }
+
+    session.step = "questions";
+    return bot.sendMessage(msg.chat.id,
+`📝 Paste all questions now
+Send /done when finished`);
+  }
+
+  if (session.step === "questions" && msg.text && !msg.text.startsWith("/")) {
+    session.buffer += "\n\n" + msg.text;
+    const count = parseQuestions(session.buffer).length;
+    return bot.sendMessage(msg.chat.id, `📝 Detected questions so far: ${count}`);
+  }
+});
+
 /* ================= /DONE ================= */
 
+bot.onText(/\/done/, async msg => {
   if (!isOwnerUser(msg.from.id)) return;
 
   const session = ADMIN.uploads[msg.from.id];
-  if (!session) {
-    return bot.sendMessage(msg.chat.id, "❌ No active upload session");
-  }
+  if (!session) return bot.sendMessage(msg.chat.id, "❌ No active upload session");
 
   const parsed = parseQuestions(session.buffer);
-
-  if (parsed.length === 0) {
-    return bot.sendMessage(msg.chat.id, "❌ No valid questions detected");
-  }
+  if (!parsed.length) return bot.sendMessage(msg.chat.id, "❌ No valid questions detected");
 
   if (session.type === "daily" && parsed.length !== 25) {
     return bot.sendMessage(msg.chat.id,
@@ -740,13 +666,10 @@ Detected: ${parsed.length}`);
     type: session.type
   })));
 
-  ownerLog(
-    `${session.type.toUpperCase()} uploaded — ${session.date} (${parsed.length} Q)`
-  );
+  ownerLog(`${session.type.toUpperCase()} uploaded — ${session.date} (${parsed.length} Q)`);
 
   await bot.sendMessage(msg.chat.id,
 `✅ Upload successful
-
 📅 Date: ${session.date}
 📝 Questions: ${parsed.length}`);
 

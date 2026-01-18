@@ -304,10 +304,6 @@ Please join the channel first.`,
  * DAILY TEST ENGINE (LOCKED)
  *************************************************/
 
-/* ================= DAILY TEST STATE ================= */
-
-const activeTests = {}; // userId -> test session
-
 /* ================= TIMER HELPER ================= */
 
 function remainingTime(t) {
@@ -1052,10 +1048,6 @@ Detected: ${parsed.length}`);
  * NEET ASPIRANTS BOT — BLOCK 6
  * ANALYTICS + STATUS + MAINTENANCE + MIDNIGHT
  *************************************************/
-
-/* ================= MAINTENANCE STATE ================= */
-
-let MAINTENANCE_MODE = false;
 
 /* =====================================================
    EXTEND OWNER CALLBACK HANDLER (SAFE)

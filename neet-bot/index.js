@@ -475,7 +475,7 @@ timeOver
 
 // DAILY ENTRY
 if (data === "daily") {
-  return startDailyTest(chatId, userId);
+  return startTest(chatId, userId, "daily");
 }
 
 // DAILY START

@@ -216,10 +216,6 @@ bot.on("callback_query", async (q) => {
  * FORCE JOIN + CALLBACK ROUTER BASE
  *************************************************/
 
-/* ================= FORCE JOIN STATE ================= */
-
-const joinPending = {}; // userId -> "daily" | "practice"
-
 /* ================= FORCE JOIN CHECK ================= */
 
 async function isJoined(userId) {

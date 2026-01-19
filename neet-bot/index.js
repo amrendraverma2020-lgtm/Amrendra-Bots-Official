@@ -1,19 +1,16 @@
 /*************************************************
- * NEET ASPIRANTS BOT — BLOCK 0
- * FOUNDATION / BOOTSTRAP
- * FILE ORDER SAFE • RENDER SAFE
+ * BLOCK-0
+ * NEET ASPIRANTS BOT — FOUNDATION
+ * CONFIG • DB • MODELS • GLOBAL STATE
  *************************************************/
 
 require("dotenv").config();
-
-/* ================= CORE IMPORTS ================= */
-
 const TelegramBot = require("node-telegram-bot-api");
 const express = require("express");
 const mongoose = require("mongoose");
 const cron = require("node-cron");
 
-/* ================= ENV CONFIG ================= */
+/* ================= CONFIG ================= */
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const OWNER_ID = Number(process.env.OWNER_ID);
@@ -22,7 +19,8 @@ const WEBHOOK_URL = process.env.WEBHOOK_URL;
 const SUPPORT_BOT_URL = process.env.SUPPORT_BOT_URL;
 
 if (!BOT_TOKEN || !OWNER_ID || !CHANNEL_USERNAME || !WEBHOOK_URL) {
-  throw new Error("❌ Missing required ENV variables");
+  console.error("❌ Missing ENV variables");
+  process.exit(1);
 }
 
 /* ================= BOT + SERVER ================= */
@@ -36,59 +34,11 @@ app.use(express.json());
 mongoose.connect(process.env.MONGO_URI)
   .then(() => console.log("✅ MongoDB connected"))
   .catch(err => {
-    console.error("❌ MongoDB connection failed", err);
+    console.error("❌ MongoDB error", err);
     process.exit(1);
   });
 
-/* ================= WEBHOOK ================= */
-
-app.post(`/bot${BOT_TOKEN}`, (req, res) => {
-  bot.processUpdate(req.body);
-  res.sendStatus(200);
-});
-
-app.listen(10000, async () => {
-  await bot.setWebHook(`${WEBHOOK_URL}/bot${BOT_TOKEN}`);
-  console.log("🚀 Bot running (FOUNDATION)");
-});
-
-/* ================= GLOBAL HELPERS ================= */
-
-const todayDate = () => new Date().toISOString().split("T")[0];
-
-const isOwnerUser = (id) => id === OWNER_ID;
-
-/* ================= FORCE JOIN CHECK ================= */
-
-async function isJoined(userId) {
-  try {
-    const m = await bot.getChatMember(CHANNEL_USERNAME, userId);
-    return ["member", "administrator", "creator"].includes(m.status);
-  } catch {
-    return false;
-  }
-}
-
-/* ================= GLOBAL STATE ================= */
-
-// Active test sessions
-const activeTests = {};   // userId -> test object
-
-// Pending force-join actions
-const joinPending = {};   // userId -> "daily" | "practice"
-
-/* ================= SAFETY FLAGS ================= */
-
-// Maintenance mode (BLOCK-5 will control this)
-let MAINTENANCE_MODE = false;
-
-
-/*************************************************
- * NEET ASPIRANTS BOT — BLOCK 1
- * /START + LEADERBOARD BASE
- *************************************************/
-
-/* ================= DATABASE MODELS ================= */
+/* ================= MODELS ================= */
 
 const User = mongoose.model("User", new mongoose.Schema({
   user_id: Number,
@@ -101,7 +51,18 @@ const User = mongoose.model("User", new mongoose.Schema({
 
   practiceTests: { type: Number, default: 0 },
   practiceCorrect: { type: Number, default: 0 },
-  practiceWrong: { type: Number, default: 0 }
+  practiceWrong: { type: Number, default: 0 },
+
+  ownerMode: { type: Boolean, default: false }
+}));
+
+const Question = mongoose.model("Question", new mongoose.Schema({
+  date: String,
+  type: String, // "daily" | "practice"
+  q: String,
+  options: [String],
+  correct: Number,
+  reason: String
 }));
 
 const Attempt = mongoose.model("Attempt", new mongoose.Schema({
@@ -111,112 +72,25 @@ const Attempt = mongoose.model("Attempt", new mongoose.Schema({
   timeTaken: Number
 }));
 
-/* ================= /START ================= */
+/* ================= WEBHOOK ================= */
 
-bot.onText(/\/start/, async (msg) => {
-  const chatId = msg.chat.id;
-  const userId = msg.from.id;
-
-  let user = await User.findOne({ user_id: userId });
-  if (!user) {
-    await User.create({
-      user_id: userId,
-      username: msg.from.username || "",
-      first_name: msg.from.first_name || "",
-      joinedAt: new Date()
-    });
-  }
-
-  await bot.sendMessage(chatId,
-`👋 *Welcome to NEET Aspirants Bot*
-
-Designed for serious NEET Biology students.
-Daily tests • Practice • Progress tracking
-
-👇 Select an option to continue`,
-    { parse_mode: "Markdown" }
-  );
-
-  await showDailyLeaderboard(chatId, todayDate());
-
-  await bot.sendMessage(chatId,
-"🚀 *START NOW*",
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "🚀 START NOW", callback_data: "main_menu" }]
-        ]
-      }
-    }
-  );
+app.post(`/bot${BOT_TOKEN}`, (req, res) => {
+  bot.processUpdate(req.body);
+  res.sendStatus(200);
 });
 
-/* ================= DAILY LEADERBOARD ================= */
-
-async function showDailyLeaderboard(chatId, date) {
-  const rows = await Attempt.aggregate([
-    { $match: { date } },
-    { $sort: { score: -1, timeTaken: 1 } },
-    {
-      $group: {
-        _id: "$user_id",
-        score: { $first: "$score" },
-        timeTaken: { $first: "$timeTaken" }
-      }
-    },
-    { $limit: 10 }
-  ]);
-
-  let text = `🏆 *Daily Biology Leaderboard*\n📅 ${date}\n\n`;
-
-  if (!rows.length) {
-    text += "No attempts yet today.\nBe the first 💪";
-  } else {
-    rows.forEach((r, i) => {
-      const rank =
-        i === 0 ? "🥇" :
-        i === 1 ? "🥈" :
-        i === 2 ? "🥉" :
-        `${i + 1}.`;
-
-      text += `${rank} Score: ${r.score}/25 | ⏱️ ${Math.floor(r.timeTaken / 60)}m ${r.timeTaken % 60}s\n`;
-    });
-  }
-
-  await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
-}
-
-/* ================= MAIN MENU CALLBACK ================= */
-
-bot.on("callback_query", async (q) => {
-  const chatId = q.message.chat.id;
-  const userId = q.from.id;
-
-  if (q.data === "main_menu") {
-    return bot.sendMessage(chatId,
-`🔥 *Let’s improve your NEET score*`,
-      {
-        parse_mode: "Markdown",
-        reply_markup: {
-          inline_keyboard: [
-            [{ text: "🧬 Take Today’s Test", callback_data: "daily" }],
-            [{ text: "🔁 Practice More", callback_data: "practice" }],
-            [{ text: "📊 View Progress", callback_data: "progress" }],
-            [{ text: "☎️ Need Help?", url: SUPPORT_BOT_URL }]
-          ]
-        }
-      }
-    );
-  }
+app.listen(10000, async () => {
+  await bot.setWebHook(`${WEBHOOK_URL}/bot${BOT_TOKEN}`);
+  console.log("🚀 Bot running (BLOCK-0)");
 });
 
-/*************************************************
- * NEET ASPIRANTS BOT — BLOCK 2
- * FORCE JOIN + CALLBACK ROUTER BASE
- *************************************************/
+/* ================= HELPERS ================= */
 
-/* ================= FORCE JOIN CHECK ================= */
+const todayDate = () =>
+  new Date().toISOString().split("T")[0];
+
+const isOwnerUser = (id) =>
+  id === OWNER_ID;
 
 async function isJoined(userId) {
   try {
@@ -227,132 +101,304 @@ async function isJoined(userId) {
   }
 }
 
-async function requireJoin(chatId, userId, action) {
-  joinPending[userId] = action;
+/* ================= GLOBAL STATE ================= */
 
-  await bot.sendMessage(chatId,
-`🔒 *Channel Join Required*
+// 🔹 Active test sessions (daily + practice)
+const activeTests = {};     // userId -> test session
 
-Is bot ke saare features use karne ke liye
-aapko pehle hamara official channel join karna hoga.`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [
-            {
-              text: "🔔 Join Channel",
-              url: `https://t.me/${CHANNEL_USERNAME.replace("@", "")}`
-            }
-          ],
-          [
-            {
-              text: "✅ I have joined",
-              callback_data: "check_join"
-            }
-          ]
-        ]
-      }
-    }
-  );
+// 🔹 Pending force-join actions
+const joinPending = {};     // userId -> "daily" | "practice"
+
+// 🔹 Maintenance mode flag
+let MAINTENANCE_MODE = false;
+
+/* ================= OWNER LOG SYSTEM ================= */
+
+const OWNER_LOGS = [];
+
+function ownerLog(text) {
+  OWNER_LOGS.unshift(`• ${text} (${new Date().toLocaleString()})`);
+  if (OWNER_LOGS.length > 20) OWNER_LOGS.pop();
+
+  bot.sendMessage(OWNER_ID, `📜 OWNER LOG\n${text}`).catch(() => {});
 }
 
-/* ================= CALLBACK ROUTER (BASE) ================= */
+/*************************************************
+ * BLOCK-1
+ * /start COMMAND + DAILY LEADERBOARD (BASE)
+ * SAFE • NO DUPLICATES • NO OVERRIDES
+ *************************************************/
+
+/* ================= /START COMMAND ================= */
+
+bot.onText(/\/start/, async (msg) => {
+  const chatId = msg.chat.id;
+  const userId = msg.from.id;
+
+  try {
+    // 🔹 Save user if not exists
+    let user = await User.findOne({ user_id: userId });
+
+    if (!user) {
+      await User.create({
+        user_id: userId,
+        username: msg.from.username || "",
+        first_name: msg.from.first_name || "",
+        joinedAt: new Date()
+      });
+    }
+
+    // 🔹 Welcome message
+    await bot.sendMessage(
+      chatId,
+`👋 *Welcome to NEET Aspirants Bot*
+
+Designed for serious NEET Biology students.
+Daily tests • Practice • Progress tracking
+
+👇 Select an option to continue`,
+      { parse_mode: "Markdown" }
+    );
+
+    // 🔹 Show today leaderboard
+    await showDailyLeaderboard(chatId, todayDate());
+
+    // 🔹 START NOW button
+    await bot.sendMessage(
+      chatId,
+"🚀 *START NOW*",
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🚀 START NOW", callback_data: "main_menu" }]
+          ]
+        }
+      }
+    );
+
+  } catch (err) {
+    console.error("❌ /start error:", err);
+    await bot.sendMessage(chatId, "⚠️ Something went wrong. Try again.");
+  }
+});
+
+/* ================= DAILY LEADERBOARD ================= */
+
+async function showDailyLeaderboard(chatId, date) {
+  try {
+    const rows = await Attempt.aggregate([
+      { $match: { date } },
+      { $sort: { score: -1, timeTaken: 1 } },
+      {
+        $group: {
+          _id: "$user_id",
+          score: { $first: "$score" },
+          timeTaken: { $first: "$timeTaken" }
+        }
+      },
+      { $limit: 10 }
+    ]);
+
+    let text =
+`🏆 *Daily Biology Leaderboard*
+📅 ${date}
+
+`;
+
+    if (!rows.length) {
+      text += "No attempts yet today.\nBe the first 💪";
+    } else {
+      rows.forEach((r, i) => {
+        const rank =
+          i === 0 ? "🥇" :
+          i === 1 ? "🥈" :
+          i === 2 ? "🥉" :
+          `${i + 1}️⃣`;
+
+        text +=
+`${rank} Score: ${r.score} / 25
+⏱️ Time: ${Math.floor(r.timeTaken / 60)}m ${r.timeTaken % 60}s
+
+`;
+      });
+    }
+
+    await bot.sendMessage(chatId, text, { parse_mode: "Markdown" });
+
+  } catch (err) {
+    console.error("❌ Leaderboard error:", err);
+    await bot.sendMessage(chatId, "⚠️ Unable to load leaderboard.");
+  }
+}
+
+/* =================================================
+   BLOCK-2 : MASTER CALLBACK ROUTER (FINAL)
+   ⚠️ ONLY ONE CALLBACK LISTENER IN WHOLE PROJECT
+================================================= */
 
 bot.on("callback_query", async (q) => {
   const chatId = q.message.chat.id;
   const userId = q.from.id;
   const data = q.data;
 
-  /* ===== FORCE JOIN CONFIRM ===== */
+  /* ================= SAFETY ================= */
+  if (!data) return;
+
+  /* ================= OWNER CALLBACKS ================= */
+  if (typeof handleOwnerCallbacks === "function" && isOwnerUser(userId)) {
+    const handled = await handleOwnerCallbacks(data, chatId, userId);
+    if (handled === true) return;
+  }
+
+  /* ================= FORCE JOIN CONFIRM ================= */
   if (data === "check_join") {
     if (await isJoined(userId)) {
       const next = joinPending[userId];
       delete joinPending[userId];
-
-      await bot.sendMessage(chatId,
-`✅ *Channel joined successfully!*
-
-You can continue now 🚀`,
-        { parse_mode: "Markdown" }
-      );
-
-      // Next action (daily / practice) later blocks handle karenge
-      return;
+      if (next) {
+        return startTest(chatId, userId, next);
+      }
     }
+    return;
+  }
 
+  /* ================= MAIN MENU ================= */
+  if (data === "main_menu") {
     return bot.sendMessage(chatId,
-`❌ *You haven't joined yet*
+`🔥 Let’s improve your NEET score`,
+    {
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "🧬 Take Today’s Test", callback_data: "daily" }],
+          [{ text: "🔁 Practice Biology", callback_data: "practice" }],
+          [{ text: "📊 My Progress", callback_data: "progress" }],
+          [{ text: "☎️ Need Help", url: SUPPORT_BOT_URL }]
+        ]
+      }
+    });
+  }
 
-Please join the channel first.`,
-      { parse_mode: "Markdown" }
+  /* ================= DAILY ENTRY ================= */
+  if (data === "daily") {
+    return startTest(chatId, userId, "daily");
+  }
+
+  /* ================= PRACTICE ENTRY ================= */
+  if (data === "practice") {
+    return startTest(chatId, userId, "practice");
+  }
+
+  /* ================= START TEST ================= */
+  if (data === "start_now" && activeTests[userId]) {
+    const t = activeTests[userId];
+    t.startTime = Date.now();
+
+    sendQuestion(chatId, userId);
+
+    setTimeout(() => {
+      if (activeTests[userId]) {
+        finishTest(chatId, userId, true);
+      }
+    }, 30 * 60 * 1000);
+
+    return;
+  }
+
+  /* ================= ANSWER (ONE CLICK ONLY) ================= */
+  if (data.startsWith("ans_") && activeTests[userId]) {
+    const t = activeTests[userId];
+    if (t.answered) return;
+
+    t.answered = true;
+
+    const sel = Number(data.split("_")[1]);
+    const cq = t.questions[t.index];
+    const correct = sel === cq.correct;
+
+    if (correct) t.score++;
+
+    return bot.sendMessage(
+      chatId,
+      correct
+        ? `✅ *Correct!*\n\n✔️ ${cq.reason}`
+        : `❌ *Wrong!*\n\n✅ Correct Answer: ${
+            ["🅐","🅑","🅒","🅓"][cq.correct]
+          }\n✔️ ${cq.reason}`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "➡️ Next Question", callback_data: "next" }]
+          ]
+        }
+      }
     );
   }
 
-  /* ===== PROTECTED ENTRIES (PLACEHOLDERS) ===== */
-  // Yahan future blocks inject honge:
-  // - daily
-  // - practice
-  // - progress
-  // - owner callbacks
+  /* ================= NEXT QUESTION ================= */
+  if (data === "next" && activeTests[userId]) {
+    const t = activeTests[userId];
+    t.index++;
 
+    if (t.index >= 25) {
+      return finishTest(chatId, userId, false);
+    }
+
+    return sendQuestion(chatId, userId);
+  }
+
+  /* ================= PROGRESS ================= */
+  if (data === "progress") {
+    return showProgress(chatId, userId);
+  }
 });
 
-
 /*************************************************
- * NEET ASPIRANTS BOT — BLOCK 3
- * DAILY TEST ENGINE (LOCKED)
+ * BLOCK-3
+ * DAILY TEST ENGINE
+ * (Logic only — callbacks handled in BLOCK-2)
  *************************************************/
 
-/* ================= TIMER HELPER ================= */
-
-function remainingTime(t) {
-  const TOTAL = 30 * 60; // 30 minutes
-  const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
-  const left = Math.max(TOTAL - elapsed, 0);
-
-  return {
-    min: Math.floor(left / 60),
-    sec: left % 60
-  };
-}
-
-/* ================= START DAILY TEST ================= */
+/* ================= DAILY TEST START ================= */
 
 async function startDailyTest(chatId, userId) {
+  // Maintenance check (owner always allowed)
+  if (MAINTENANCE_MODE && !isOwnerUser(userId)) {
+    return bot.sendMessage(chatId,
+`🔧 Bot under maintenance.
+Please try again later 🙏`);
+  }
+
+  // Force join
   if (!(await isJoined(userId))) {
     return requireJoin(chatId, userId, "daily");
   }
 
   const date = todayDate();
 
-  // Only 1 attempt per day (except owner)
+  // One attempt per day (owner exempted)
   if (!isOwnerUser(userId)) {
-    const done = await Attempt.findOne({ user_id: userId, date });
-    if (done) {
+    const already = await Attempt.findOne({ user_id: userId, date });
+    if (already) {
       return bot.sendMessage(chatId,
-`❌ *You already attempted today's test*
-
-Come back tomorrow 💪`,
-        { parse_mode: "Markdown" }
-      );
+`❌ You already attempted today’s test.
+Come back tomorrow 💪`);
     }
   }
 
-  const qs = await Question.find({ date, type: "daily" });
-  if (qs.length !== 25) {
+  // Fetch questions
+  const questions = await Question.find({ date, type: "daily" });
+  if (questions.length !== 25) {
     return bot.sendMessage(chatId,
-`⏳ *Daily test not available yet*
-
-Please try again later.`,
-      { parse_mode: "Markdown" }
-    );
+`⏳ Daily test not available yet.`);
   }
 
+  // Create session
   activeTests[userId] = {
     type: "daily",
     date,
-    questions: qs,
+    questions,
     index: 0,
     score: 0,
     answered: false,
@@ -366,7 +412,7 @@ Please try again later.`,
 ⏱️ Time Limit: 30 Minutes
 🏆 Rank + Leaderboard Included
 
-👇 Ready? Start below`,
+👇 Ready?`,
     {
       parse_mode: "Markdown",
       reply_markup: {
@@ -381,27 +427,27 @@ Please try again later.`,
 
 /* ================= SEND DAILY QUESTION ================= */
 
-async function sendDailyQuestion(chatId, userId) {
+function sendDailyQuestion(chatId, userId) {
   const t = activeTests[userId];
   if (!t) return;
 
   const q = t.questions[t.index];
-  const time = remainingTime(t);
-
   t.answered = false;
 
-  await bot.sendMessage(chatId,
+  const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
+  const left = Math.max(1800 - elapsed, 0);
+
+  const min = Math.floor(left / 60);
+  const sec = left % 60;
+
+  bot.sendMessage(chatId,
 `🧬 *Question ${t.index + 1} / 25*
-⏱️ Time Left: ${time.min} min ${time.sec} sec
+⏱️ Time Left: ${min} min ${sec} sec
 
 ${q.q}
 
-🅐 ${q.options[0]}
-🅑 ${q.options[1]}
-🅒 ${q.options[2]}
-🅓 ${q.options[3]}
-
-👇 Choose the correct option`,
+🅐 ${q.options[0]}     🅑 ${q.options[1]}
+🅒 ${q.options[2]}     🅓 ${q.options[3]}`,
     {
       parse_mode: "Markdown",
       reply_markup: {
@@ -428,6 +474,7 @@ async function finishDailyTest(chatId, userId, timeOver) {
 
   const timeTaken = Math.floor((Date.now() - t.startTime) / 1000);
 
+  // Save attempt (owner excluded)
   if (!isOwnerUser(userId)) {
     await Attempt.create({
       user_id: userId,
@@ -446,12 +493,12 @@ async function finishDailyTest(chatId, userId, timeOver) {
 
   await bot.sendMessage(chatId,
 timeOver
-? `⏰ *Time Over — Test Auto Submitted*
+  ? `⏰ *Time Over — Test Auto Submitted*
 
-⭐ Score: ${t.score} / 25`
-: `✅ *Daily Test Completed 🎉*
+📝 Score: ${t.score} / 25`
+  : `✅ *Daily Test Completed 🎉*
 
-⭐ Score: ${t.score} / 25
+📝 Score: ${t.score} / 25
 ⏱️ Time Taken: ${Math.floor(timeTaken/60)} min ${timeTaken%60} sec`,
     { parse_mode: "Markdown" }
   );
@@ -468,112 +515,52 @@ timeOver
   }
 });
 }
-bot.on("callback_query", async (q) => {
-  const chatId = q.message.chat.id;
-  const userId = q.from.id;
-  const data = q.data;
-
-  // ✅ SAB if(data === ...) YAHIN AAYEGA
-
-  if (data === "daily") {
-    return startTest(chatId, userId, "daily");
-  }
-
-  if (data === "daily_start" && activeTests[userId]) {
-    const t = activeTests[userId];
-    t.startTime = Date.now();
-
-    sendDailyQuestion(chatId, userId);
-
-    setTimeout(() => {
-      if (activeTests[userId]) {
-        finishDailyTest(chatId, userId, true);
-      }
-    }, 30 * 60 * 1000);
-
-    return;
-  }
-
-});
-// ANSWER (ONE-TIME CLICK)
-if (data.startsWith("ans_") && activeTests[userId]) {
-  const t = activeTests[userId];
-  if (t.answered) return;
-
-  t.answered = true;
-
-  const selected = Number(data.split("_")[1]);
-  const q = t.questions[t.index];
-
-  const correct = selected === q.correct;
-  if (correct) t.score++;
-
-  return bot.sendMessage(chatId,
-correct
-? `✅ *Correct!*\n\n✔️ ${q.reason}`
-: `❌ *Wrong!*\n\n✅ Correct Answer: ${["🅐","🅑","🅒","🅓"][q.correct]}\n✔️ ${q.reason}`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "➡️ Next Question", callback_data: "daily_next" }]
-        ]
-      }
-    }
-  );
-}
-
-// NEXT QUESTION
-if (data === "daily_next" && activeTests[userId]) {
-  const t = activeTests[userId];
-  t.index++;
-
-  if (t.index >= 25) {
-    return finishDailyTest(chatId, userId, false);
-  }
-
-  return sendDailyQuestion(chatId, userId);
-}
-
 
 /*************************************************
- * NEET ASPIRANTS BOT — BLOCK 4
- * PRACTICE TEST ENGINE (RANDOM + LOCKED)
+ * BLOCK-4
+ * PRACTICE TEST ENGINE
+ * (Logic only — callbacks in BLOCK-2)
  *************************************************/
 
-/* ================= PRACTICE RANDOM PICKER ================= */
+/* ================= RANDOM PRACTICE PICKER ================= */
 
 async function getRandomPracticeQuestions() {
   const total = await Question.countDocuments({ type: "practice" });
   if (total < 25) return [];
 
-  const skip = Math.floor(Math.random() * (total - 25));
+  const skip = Math.floor(Math.random() * (total - 25 + 1));
+
   return Question.find({ type: "practice" })
     .skip(skip)
     .limit(25);
 }
 
-/* ================= PRACTICE START ================= */
+/* ================= PRACTICE TEST START ================= */
 
 async function startPracticeTest(chatId, userId) {
+  // Maintenance check
+  if (MAINTENANCE_MODE && !isOwnerUser(userId)) {
+    return bot.sendMessage(chatId,
+`🔧 Bot under maintenance.
+Please try again later 🙏`);
+  }
+
+  // Force join
   if (!(await isJoined(userId))) {
     return requireJoin(chatId, userId, "practice");
   }
 
-  const qs = await getRandomPracticeQuestions();
-  if (!qs.length) {
+  // Fetch random questions
+  const questions = await getRandomPracticeQuestions();
+  if (!questions.length) {
     return bot.sendMessage(chatId,
-`⏳ *Practice questions not available yet*
-
-Please try again later 💪`,
-      { parse_mode: "Markdown" }
-    );
+`⏳ Practice questions not available yet.`);
   }
 
+  // Create session
   activeTests[userId] = {
     type: "practice",
-    date: todayDate(),
-    questions: qs,
+    questions,
     index: 0,
     score: 0,
     answered: false,
@@ -587,13 +574,7 @@ Please try again later 💪`,
 ⏱️ Time Limit: 30 Minutes
 📚 Purpose: Learning + Concept clarity
 
-📌 Rules:
-• Practice multiple times allowed
-• No leaderboard / no rank
-• Every question has explanation
-• Timer never pauses
-
-👇 Ready? Start below`,
+👇 Ready?`,
     {
       parse_mode: "Markdown",
       reply_markup: {
@@ -608,27 +589,27 @@ Please try again later 💪`,
 
 /* ================= SEND PRACTICE QUESTION ================= */
 
-async function sendPracticeQuestion(chatId, userId) {
+function sendPracticeQuestion(chatId, userId) {
   const t = activeTests[userId];
   if (!t) return;
 
   const q = t.questions[t.index];
-  const time = remainingTime(t);
-
   t.answered = false;
 
-  await bot.sendMessage(chatId,
+  const elapsed = Math.floor((Date.now() - t.startTime) / 1000);
+  const left = Math.max(1800 - elapsed, 0);
+
+  const min = Math.floor(left / 60);
+  const sec = left % 60;
+
+  bot.sendMessage(chatId,
 `🧬 *Question ${t.index + 1} / 25*
-⏱️ Time Left: ${time.min} min ${time.sec} sec
+⏱️ Time Left: ${min} min ${sec} sec
 
 ${q.q}
 
-🅐 ${q.options[0]}
-🅑 ${q.options[1]}
-🅒 ${q.options[2]}
-🅓 ${q.options[3]}
-
-👇 Choose the correct option`,
+🅐 ${q.options[0]}     🅑 ${q.options[1]}
+🅒 ${q.options[2]}     🅓 ${q.options[3]}`,
     {
       parse_mode: "Markdown",
       reply_markup: {
@@ -658,6 +639,7 @@ async function finishPracticeTest(chatId, userId, timeOver) {
   const wrong = 25 - correct;
   const accuracy = ((correct / 25) * 100).toFixed(1);
 
+  // Update user stats (owner also allowed)
   await User.updateOne(
     { user_id: userId },
     {
@@ -682,8 +664,7 @@ async function finishPracticeTest(chatId, userId, timeOver) {
 📊 Accuracy: ${accuracy} %
 
 💡 Tip:
-Weak concepts revise karo
-Practice repeat karo`,
+Galat questions ke concepts revise karo`,
     {
       parse_mode: "Markdown",
       reply_markup: {
@@ -696,80 +677,16 @@ Practice repeat karo`,
   );
 }
 
-/* ================= CALLBACK INJECTION ================= */
-
-// ⬇️ ADD THESE INSIDE BLOCK-2 CALLBACK ROUTER ⬇️
-
-// PRACTICE ENTRY
-if (data === "practice") {
-  return startPracticeTest(chatId, userId);
-}
-
-// PRACTICE START
-if (data === "practice_start" && activeTests[userId]) {
-  const t = activeTests[userId];
-  t.startTime = Date.now();
-
-  sendPracticeQuestion(chatId, userId);
-
-  setTimeout(() => {
-    if (activeTests[userId]) {
-      finishPracticeTest(chatId, userId, true);
-    }
-  }, 30 * 60 * 1000);
-
-  return;
-}
-
-// PRACTICE ANSWER (ONE CLICK ONLY)
-if (data.startsWith("p_ans_") && activeTests[userId]) {
-  const t = activeTests[userId];
-  if (t.answered) return;
-
-  t.answered = true;
-
-  const selected = Number(data.split("_")[2]);
-  const q = t.questions[t.index];
-
-  const correct = selected === q.correct;
-  if (correct) t.score++;
-
-  return bot.sendMessage(chatId,
-correct
-? `✅ *Correct!*\n\n✔️ ${q.reason}`
-: `❌ *Wrong!*\n\n✅ Correct Answer: ${["🅐","🅑","🅒","🅓"][q.correct]}\n✔️ ${q.reason}`,
-    {
-      parse_mode: "Markdown",
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "➡️ Next Question", callback_data: "practice_next" }]
-        ]
-      }
-    }
-  );
-}
-
-// PRACTICE NEXT
-if (data === "practice_next" && activeTests[userId]) {
-  const t = activeTests[userId];
-  t.index++;
-
-  if (t.index >= 25) {
-    return finishPracticeTest(chatId, userId, false);
-  }
-
-  return sendPracticeQuestion(chatId, userId);
-}
-
 /*************************************************
- * NEET ASPIRANTS BOT — BLOCK 5
- * OWNER UPLOAD ENGINE (DAILY + PRACTICE)
+ * BLOCK-5
+ * OWNER UPLOAD SYSTEM
+ * Upload Daily / Practice + Overwrite + /done
  *************************************************/
 
 /* ================= OWNER STATE ================= */
 
 const ADMIN = {
-  uploads: {},   // ownerId → { type, step, date, buffer }
+  uploads: {},   // ownerId -> { type, step, date, buffer }
   logs: []
 };
 
@@ -779,13 +696,15 @@ function ownerLog(text) {
   bot.sendMessage(OWNER_ID, `📜 OWNER LOG\n${text}`).catch(() => {});
 }
 
+/* ================= DATE VALIDATION ================= */
+
 function validDate(d) {
   return /^\d{4}-\d{2}-\d{2}$/.test(d);
 }
 
 /* ================= STRONG QUESTION PARSER ================= */
 /*
-FORMAT (copy-paste safe):
+FORMAT:
 
 Q1. Question text
 A) option
@@ -823,49 +742,62 @@ function parseQuestions(raw) {
   return out;
 }
 
-/* =====================================================
-   OWNER CALLBACK HANDLER (EXTENDS BLOCK-2)
-===================================================== */
+/* ================= OWNER PANEL ENTRY ================= */
 
-const originalOwnerCallbacks_B5 = typeof handleOwnerCallbacks === "function"
-  ? handleOwnerCallbacks
-  : async () => false;
+async function showOwnerPanel(chatId) {
+  await bot.sendMessage(chatId,
+`👑 *OWNER CONTROL PANEL*
 
-handleOwnerCallbacks = async function (data, chatId, userId) {
-  const handled = await originalOwnerCallbacks_B5(data, chatId, userId);
-  if (handled) return true;
+Choose an action 👇`,
+    {
+      parse_mode: "Markdown",
+      reply_markup: {
+        inline_keyboard: [
+          [{ text: "📤 Upload Question Bank", callback_data: "UPLOAD_BANK" }],
+          [{ text: "📜 Owner Logs", callback_data: "OWNER_LOGS" }]
+        ]
+      }
+    }
+  );
+}
 
+/* ================= OWNER CALLBACK HANDLER ================= */
+
+async function handleOwnerCallbacks(data, chatId, userId) {
   if (!isOwnerUser(userId)) return false;
 
   const session = ADMIN.uploads[userId];
 
   /* ===== OWNER PANEL ===== */
- if (data === "OWNER_PANEL") {
-  await bot.sendMessage(chatId,
-`👑 OWNER CONTROL PANEL
+  if (data === "OWNER_PANEL") {
+    await showOwnerPanel(chatId);
+    return true;
+  }
 
-Choose an action 👇`,
-    {
-      reply_markup: {
-        inline_keyboard: [
-          [{ text: "📤 Upload & Question Bank", callback_data: "UPLOAD_BANK" }],
-          [{ text: "📊 Analytics", callback_data: "ADMIN_ANALYTICS" }],
-          [{ text: "📡 Bot Status", callback_data: "ADMIN_STATUS" }],
-          [
-            { text: "🔒 Maintenance ON", callback_data: "ADMIN_MAINT_ON" },
-            { text: "🔓 Maintenance OFF", callback_data: "ADMIN_MAINT_OFF" }
-          ],
-          [{ text: "📜 Owner Logs", callback_data: "ADMIN_LOGS" }]
-        ]
+  /* ===== UPLOAD MENU ===== */
+  if (data === "UPLOAD_BANK") {
+    await bot.sendMessage(chatId,
+`📤 *UPLOAD QUESTION BANK*
+
+Choose upload type 👇`,
+      {
+        parse_mode: "Markdown",
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: "🧬 Upload Daily Test", callback_data: "UPLOAD_DAILY" }],
+            [{ text: "🔁 Upload Practice Bank", callback_data: "UPLOAD_PRACTICE" }],
+            [{ text: "⬅️ Back", callback_data: "OWNER_PANEL" }]
+          ]
+        }
       }
-    }
-  );
-  return true;
-}
-  /* ===== DAILY UPLOAD START ===== */
-  if (data === "ADMIN_DAILY") {
+    );
+    return true;
+  }
+
+  /* ===== START DAILY UPLOAD ===== */
+  if (data === "UPLOAD_DAILY") {
     if (session) {
-      await bot.sendMessage(chatId, "⚠️ Finish current upload first using /done");
+      await bot.sendMessage(chatId, "⚠️ Finish current upload using /done");
       return true;
     }
 
@@ -879,17 +811,17 @@ Choose an action 👇`,
     ownerLog("Started DAILY upload");
 
     await bot.sendMessage(chatId,
-`📅 DAILY TEST UPLOAD
+`📅 *DAILY TEST UPLOAD*
 
 Send date in format:
 YYYY-MM-DD`);
     return true;
   }
 
-  /* ===== PRACTICE UPLOAD START ===== */
-  if (data === "ADMIN_PRACTICE") {
+  /* ===== START PRACTICE UPLOAD ===== */
+  if (data === "UPLOAD_PRACTICE") {
     if (session) {
-      await bot.sendMessage(chatId, "⚠️ Finish current upload first using /done");
+      await bot.sendMessage(chatId, "⚠️ Finish current upload using /done");
       return true;
     }
 
@@ -903,7 +835,7 @@ YYYY-MM-DD`);
     ownerLog("Started PRACTICE upload");
 
     await bot.sendMessage(chatId,
-`📅 PRACTICE QUESTION BANK
+`📅 *PRACTICE QUESTION BANK*
 
 Send date (grouping only):
 YYYY-MM-DD`);
@@ -936,16 +868,22 @@ Send /done when finished`);
   }
 
   /* ===== OWNER LOGS ===== */
-  if (data === "ADMIN_LOGS") {
-    await bot.sendMessage(chatId,
-`📜 OWNER LOGS
+  if (data === "OWNER_LOGS") {
+    const logs = ADMIN.logs.length
+      ? ADMIN.logs.join("\n")
+      : "No logs yet";
 
-${ADMIN.logs.length ? ADMIN.logs.join("\n") : "No logs yet"}`);
+    await bot.sendMessage(chatId,
+`📜 *OWNER LOGS*
+
+${logs}`,
+      { parse_mode: "Markdown" }
+    );
     return true;
   }
 
   return false;
-};
+}
 
 /* ================= OWNER MESSAGE FLOW ================= */
 
@@ -1015,6 +953,7 @@ bot.onText(/\/done/, async msg => {
   }
 
   const parsed = parseQuestions(session.buffer);
+
   if (parsed.length === 0) {
     return bot.sendMessage(msg.chat.id, "❌ No valid questions detected");
   }
@@ -1036,37 +975,38 @@ Detected: ${parsed.length}`);
   );
 
   await bot.sendMessage(msg.chat.id,
-`✅ Upload successful
+`✅ *Upload Successful*
 
 📅 Date: ${session.date}
-📝 Questions: ${parsed.length}`);
+📝 Questions: ${parsed.length}`,
+    { parse_mode: "Markdown" }
+  );
 
   delete ADMIN.uploads[msg.from.id];
 });
 
 
 /*************************************************
- * NEET ASPIRANTS BOT — BLOCK 6
- * ANALYTICS + STATUS + MAINTENANCE + MIDNIGHT
+ * BLOCK-6
+ * ANALYTICS + MAINTENANCE + EMERGENCY CONTROLS
  *************************************************/
 
-/* =====================================================
-   EXTEND OWNER CALLBACK HANDLER (SAFE)
-===================================================== */
+/* ================= MAINTENANCE STATE ================= */
 
-const originalOwnerCallbacks_B6 =
-  typeof handleOwnerCallbacks === "function"
-    ? handleOwnerCallbacks
-    : async () => false;
+let MAINTENANCE_MODE = false;
+
+/* ================= EXTEND OWNER CALLBACK HANDLER ================= */
+
+const _ownerCallbacks_Block6 = handleOwnerCallbacks;
 
 handleOwnerCallbacks = async function (data, chatId, userId) {
-  // Let previous blocks handle first
-  const handled = await originalOwnerCallbacks_B6(data, chatId, userId);
+  // Pehle BLOCK-5 handle kare
+  const handled = await _ownerCallbacks_Block6(data, chatId, userId);
   if (handled) return true;
 
   if (!isOwnerUser(userId)) return false;
 
-  /* ===== ANALYTICS ===== */
+  /* ========== ANALYTICS ========== */
   if (data === "ADMIN_ANALYTICS") {
     const totalUsers = await User.countDocuments();
     const today = todayDate();
@@ -1094,7 +1034,7 @@ handleOwnerCallbacks = async function (data, chatId, userId) {
     ]);
 
     const p = practiceAgg[0] || { sessions: 0, correct: 0, wrong: 0 };
-    const acc = p.correct + p.wrong
+    const accuracy = (p.correct + p.wrong)
       ? ((p.correct / (p.correct + p.wrong)) * 100).toFixed(1)
       : "0";
 
@@ -1109,13 +1049,15 @@ handleOwnerCallbacks = async function (data, chatId, userId) {
 
 🔁 Practice
 • Sessions: ${p.sessions}
-• Accuracy: ${acc} %`,
+• Accuracy: ${accuracy} %
+
+⚙️ Status: Running`,
       { parse_mode: "Markdown" }
     );
     return true;
   }
 
-  /* ===== BOT STATUS ===== */
+  /* ========== BOT STATUS ========== */
   if (data === "ADMIN_STATUS") {
     await bot.sendMessage(chatId,
 `📡 *BOT STATUS*
@@ -1129,7 +1071,7 @@ handleOwnerCallbacks = async function (data, chatId, userId) {
     return true;
   }
 
-  /* ===== MAINTENANCE ON ===== */
+  /* ========== MAINTENANCE ON ========== */
   if (data === "ADMIN_MAINT_ON") {
     MAINTENANCE_MODE = true;
     ownerLog("Maintenance mode ENABLED");
@@ -1137,13 +1079,14 @@ handleOwnerCallbacks = async function (data, chatId, userId) {
     await bot.sendMessage(chatId,
 `🔒 *Maintenance Enabled*
 
-Users temporarily blocked.`,
+Users temporarily blocked.
+Owner access allowed.`,
       { parse_mode: "Markdown" }
     );
     return true;
   }
 
-  /* ===== MAINTENANCE OFF ===== */
+  /* ========== MAINTENANCE OFF ========== */
   if (data === "ADMIN_MAINT_OFF") {
     MAINTENANCE_MODE = false;
     ownerLog("Maintenance mode DISABLED");
@@ -1151,7 +1094,33 @@ Users temporarily blocked.`,
     await bot.sendMessage(chatId,
 `✅ *Maintenance Disabled*
 
-Bot live again.`,
+Bot is live again.`,
+      { parse_mode: "Markdown" }
+    );
+    return true;
+  }
+
+  /* ========== FORCE NEW DAY ========== */
+  if (data === "ADMIN_FORCE_NEW_DAY") {
+    const users = await User.find({});
+    let sent = 0;
+
+    for (const u of users) {
+      try {
+        await bot.sendMessage(
+          u.user_id,
+          "🧬 New Biology Test is LIVE!\n25 Questions | 30 Minutes\nAll the best 💪"
+        );
+        sent++;
+      } catch {}
+    }
+
+    ownerLog(`Force New Day — notified ${sent} users`);
+
+    await bot.sendMessage(chatId,
+`🚨 *Force New Day Executed*
+
+📢 Users notified: ${sent}`,
       { parse_mode: "Markdown" }
     );
     return true;
@@ -1160,50 +1129,19 @@ Bot live again.`,
   return false;
 };
 
-/* =================================================
-   GLOBAL MAINTENANCE GUARD (USER SIDE)
-================================================= */
+/* ================= GLOBAL MAINTENANCE GUARD ================= */
 
-// Wrap startTest safely (only blocks users)
-const originalStartTest_B6 =
-  typeof startTest === "function" ? startTest : null;
+const _startTest_Block6 = startTest;
 
-if (originalStartTest_B6) {
-  startTest = async function (chatId, userId, type) {
-    if (MAINTENANCE_MODE && !isOwnerUser(userId)) {
-      return bot.sendMessage(chatId,
+startTest = async function (chatId, userId, type) {
+  if (MAINTENANCE_MODE && !isOwnerUser(userId)) {
+    return bot.sendMessage(chatId,
 `🔧 *Bot Under Maintenance*
 
 Please try again later 🙏`,
-        { parse_mode: "Markdown" }
-      );
-    }
-    return originalStartTest_B6(chatId, userId, type);
-  };
-}
-
-/* =================================================
-   MIDNIGHT CRON (DAILY REPORT)
-================================================= */
-
-// NOTE: cron is already required in BLOCK-0
-cron.schedule("0 0 * * *", async () => {
-  try {
-    const today = todayDate();
-    const attempts = await Attempt.countDocuments({ date: today });
-
-    ownerLog(`🌙 Midnight report: ${attempts} daily attempts today`);
-  } catch (err) {
-    console.error("❌ Midnight cron error:", err);
+      { parse_mode: "Markdown" }
+    );
   }
-});
 
-/* =================================================
-   OWNER PANEL BUTTONS (REFERENCE)
-================================================= */
-// Add these buttons INSIDE OWNER PANEL UI (BLOCK-5)
-//
-// 📊 Analytics        → ADMIN_ANALYTICS
-// 📡 Bot Status       → ADMIN_STATUS
-// 🔒 Maintenance ON   → ADMIN_MAINT_ON
-// 🔓 Maintenance OFF  → ADMIN_MAINT_OFF
+  return _startTest_Block6(chatId, userId, type);
+};

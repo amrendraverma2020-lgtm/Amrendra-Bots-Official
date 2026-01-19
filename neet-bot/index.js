@@ -991,10 +991,6 @@ Detected: ${parsed.length}`);
  * ANALYTICS + MAINTENANCE + EMERGENCY CONTROLS
  *************************************************/
 
-/* ================= MAINTENANCE STATE ================= */
-
-let MAINTENANCE_MODE = false;
-
 /* ================= EXTEND OWNER CALLBACK HANDLER ================= */
 
 const _ownerCallbacks_Block6 = handleOwnerCallbacks;

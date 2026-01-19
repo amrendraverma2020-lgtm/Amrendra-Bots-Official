@@ -468,28 +468,33 @@ timeOver
   }
 });
 }
-// ================= CALLBACK INJECTION =================
+bot.on("callback_query", async (q) => {
+  const chatId = q.message.chat.id;
+  const userId = q.from.id;
+  const data = q.data;
 
-// DAILY ENTRY
-if (data === "daily") {
-  return startTest(chatId, userId, "daily");
-}
+  // ✅ SAB if(data === ...) YAHIN AAYEGA
 
-// DAILY START
-if (data === "daily_start" && activeTests[userId]) {
-  const t = activeTests[userId];
-  t.startTime = Date.now();
+  if (data === "daily") {
+    return startTest(chatId, userId, "daily");
+  }
 
-  sendDailyQuestion(chatId, userId);
+  if (data === "daily_start" && activeTests[userId]) {
+    const t = activeTests[userId];
+    t.startTime = Date.now();
 
-  setTimeout(() => {
-    if (activeTests[userId]) {
-      finishDailyTest(chatId, userId, true);
-    }
-  }, 30 * 60 * 1000);
+    sendDailyQuestion(chatId, userId);
 
-  return;
-}
+    setTimeout(() => {
+      if (activeTests[userId]) {
+        finishDailyTest(chatId, userId, true);
+      }
+    }, 30 * 60 * 1000);
+
+    return;
+  }
+
+});
 // ANSWER (ONE-TIME CLICK)
 if (data.startsWith("ans_") && activeTests[userId]) {
   const t = activeTests[userId];

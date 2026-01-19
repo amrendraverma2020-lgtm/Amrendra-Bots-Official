@@ -468,22 +468,9 @@ timeOver
   }
 });
 }
-
-/* ================= CALLBACK INJECTION ================= */
-
-// ⬇️ ADD THESE INSIDE BLOCK-2 CALLBACK ROUTER ⬇️
+// ================= CALLBACK INJECTION =================
 
 // DAILY ENTRY
-bot.on("callback_query", async (q) => {
-  const chatId = q.message.chat.id;
-  const userId = q.from.id;
-  const data = q.data;
-
-  
-if (data === "daily") {
-  return startTest(chatId, userId, "daily");
-});
-
 if (data === "daily") {
   return startTest(chatId, userId, "daily");
 }
@@ -503,7 +490,6 @@ if (data === "daily_start" && activeTests[userId]) {
 
   return;
 }
-
 // ANSWER (ONE-TIME CLICK)
 if (data.startsWith("ans_") && activeTests[userId]) {
   const t = activeTests[userId];

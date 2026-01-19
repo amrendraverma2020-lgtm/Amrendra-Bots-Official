@@ -474,6 +474,16 @@ timeOver
 // ⬇️ ADD THESE INSIDE BLOCK-2 CALLBACK ROUTER ⬇️
 
 // DAILY ENTRY
+bot.on("callback_query", async (q) => {
+  const chatId = q.message.chat.id;
+  const userId = q.from.id;
+  const data = q.data;
+
+  
+if (data === "daily") {
+  return startTest(chatId, userId, "daily");
+});
+
 if (data === "daily") {
   return startTest(chatId, userId, "daily");
 }
